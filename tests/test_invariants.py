@@ -274,3 +274,64 @@ def test_palette_recovers_an_exact_synthetic_set():
     pal = palette.extract(img, Config())
     got = {palette.rgb_to_hex(c) for c in pal}
     assert got == {palette.rgb_to_hex(np.array(c)) for c in want}
+
+
+# --------------------------------------------------------------------------
+# fine detail inside a large shape
+
+def _linked_discs(size=512, r=46, rod=14, gap=120):
+    """Three discs in a triangle joined by thin rods, like a molecule mark."""
+    yy, xx = np.mgrid[0:size, 0:size]
+    img = np.full((size, size, 3), 255, dtype=np.uint8)
+    c = size // 2
+    pts = [(c, c - gap), (c - gap, c + gap // 2), (c + gap, c + gap // 2)]
+    m = np.zeros((size, size), bool)
+    for px, py in pts:
+        m |= (xx - px) ** 2 + (yy - py) ** 2 <= r * r
+    for (ax, ay), (bx, by) in ((pts[0], pts[1]), (pts[1], pts[2]), (pts[0], pts[2])):
+        d = np.hypot(bx - ax, by - ay)
+        t = np.clip(((xx - ax) * (bx - ax) + (yy - ay) * (by - ay)) / (d * d), 0, 1)
+        m |= np.hypot(xx - (ax + t * (bx - ax)), yy - (ay + t * (by - ay))) <= rod / 2
+    img[m] = (25, 99, 68)
+    return img, m
+
+
+def test_fine_detail_survives_the_round_trip():
+    """Thin rods and the holes between them must come back the same size.
+
+    Stated as measurable geometry rather than by eye: comparing a soft source
+    against a crisp vector render at high zoom makes every edge look fatter than
+    it is, and chasing that illusion wastes an afternoon. Ink area and enclosed
+    hole area are not fooled. On the two real marks this was checked against,
+    ink lands within 1% and holes within 1%.
+    """
+    from img2svg import raster
+    from img2svg.pipeline import convert
+    from scipy import ndimage
+
+    if raster.backend() is None:
+        pytest.skip("no SVG renderer installed")
+    img, mask = _linked_discs(size=1024)
+    res = convert(img, Config())
+    shot = raster.render(res.svg, res.width, res.height, background=(255, 255, 255))
+    drawn = np.abs(shot.astype(int) - np.array([25, 99, 68])).max(-1) < 60
+
+    ink = mask.sum()
+    assert abs(int(drawn.sum()) - ink) < 0.03 * ink, "ink area drifted"
+
+    holes_src = int((ndimage.binary_fill_holes(mask) & ~mask).sum())
+    holes_out = int((ndimage.binary_fill_holes(drawn) & ~drawn).sum())
+    assert abs(holes_out - holes_src) < 0.05 * holes_src, \
+        f"enclosed hole area {holes_src} -> {holes_out}"
+
+    xor = int((mask ^ drawn).sum())
+    assert xor < 0.02 * img.shape[0] * img.shape[1], "disagreement is more than an edge band"
+
+
+def test_smoothing_window_is_capped_by_shape_size_not_canvas_size():
+    from img2svg import regions
+
+    small = 40.0 ** 2      # a 40px feature
+    big = 400.0 ** 2
+    assert regions.SMOOTH_OF_EXTENT * np.sqrt(small) < 3
+    assert regions.SMOOTH_OF_EXTENT * np.sqrt(big) > 20

@@ -54,8 +54,13 @@ class Config:
     """Smoothing window = contour length / this."""
     smooth_min: int = 2
     """*scaled* Floor on the smoothing window."""
-    smooth_max: int = 22
-    """*scaled* Ceiling on the smoothing window."""
+    smooth_max: int = 8
+    """*scaled* Ceiling on the smoothing window.
+
+    Was 22, which is a 45-point moving average. On artwork whose shapes have fine
+    concave detail - circles joined by thin rods - a window that wide drags the
+    junctions outward until the rods fatten and the gaps between them close up.
+    """
     corner_deg: float = 50.0
     """Turns sharper than this keep a hard corner instead of a smooth tangent."""
     keep_corners: str = "auto"

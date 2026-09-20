@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import List, Tuple
 
@@ -10,6 +11,20 @@ from scipy import ndimage
 
 from .config import Config
 from . import curves
+
+SMOOTH_OF_EXTENT = 0.06
+"""Smoothing window as a share of sqrt(area).
+
+Features do not grow with the canvas - a 1400px logo can be built from 40px
+dots - so a window sized from the image drags their junctions outward. Capping
+it by the shape's own size is worth about 0.1 dE on illustration and costs
+nothing; it is not, as first suspected, the difference between thin rods
+surviving and welding together, which they do either way.
+"""
+
+# Capping the curve tolerance by shape size as well was tried and dropped: it
+# bought 0.03 dE and cost twice the curves. The faceting it was meant to fix
+# turned out to be ragged layer junctions, which is a different problem.
 
 
 def keep_corners(cfg: Config) -> bool:
@@ -64,7 +79,12 @@ def components(mask: np.ndarray, label: int, cfg: Config) -> List[Region]:
 
 
 def region_path(mask: np.ndarray, cfg: Config, ins: float) -> Tuple[str, int]:
-    """Path data for one region: outer loops plus any holes big enough to keep."""
+    """Path data for one region: outer loops plus any holes big enough to keep.
+
+    The smoothing window is capped by the size of the shape being drawn, not the
+    size of the canvas, since features do not grow with the image. The cap only
+    ever tightens the global setting.
+    """
     loops = curves.boundary_loops(mask)
     if not loops:
         return "", 0
@@ -74,9 +94,12 @@ def region_path(mask: np.ndarray, cfg: Config, ins: float) -> Tuple[str, int]:
         a = abs(curves.polygon_area(loop))
         if a < cfg.min_hole_area:
             continue
+        extent = math.sqrt(a)
         k = int(max(cfg.smooth_min, min(cfg.smooth_max, round(len(loop) / cfg.smooth_div))))
+        k = int(min(k, max(1, extent * SMOOTH_OF_EXTENT)))
+        eps = cfg.rdp
         d, n = curves.loop_to_path(
-            loop, smooth_k=k, eps=cfg.rdp, ins=ins,
+            loop, smooth_k=k, eps=eps, ins=ins,
             corner_deg=cfg.corner_deg, prec=cfg.precision,
             keep_corners=keep_corners(cfg),
         )

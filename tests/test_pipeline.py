@@ -191,7 +191,7 @@ def test_the_bundled_example_stays_faithful():
     shot = raster.render(res.svg, res.width, res.height, background=res.background_rgb)
     stats = verify.compare(rgb, shot)
     assert stats["mean"] < 2.5, verify.format_report(stats)
-    assert res.segments < 1000
+    assert res.segments < 800
 
 
 def test_verify_defaults_to_the_sources_own_page_colour():

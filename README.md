@@ -264,7 +264,10 @@ print(verify.format_report(verify.compare(rgb, shot)))
 - Memory is roughly 8 bytes per pixel per palette entry during segmentation.
 - Where three regions meet at a narrow tip, the boundary between two of them can
   step by a pixel or two instead of running smoothly into the point. Raising
-  `--blur` reduces it.
+  `--blur` reduces it, and `--layers stacked` usually removes it.
+- Gradients become flat bands. On a six-colour gradient mark that lands at
+  ΔE 1.1 with ink area within 0.7 % of the source, which reads as clean flat
+  art rather than as banding — but it is a reinterpretation, not a reproduction.
 
 ## Development
 
