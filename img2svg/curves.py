@@ -317,7 +317,11 @@ def loop_to_path(loop: Sequence[Point], *, tolerance: float, ins: float,
 
     pts = list(loop)
     if presmooth:
-        pts = smooth(pts, presmooth)
+        # Corners are held back from the average. Smoothing runs before anything
+        # looks for a corner, so without this a crisp vertex is already a gentle
+        # bend by the time the fitter sees it, and comes out as an arc - the
+        # angular joints of a line diagram all quietly become curves.
+        pts = smooth(pts, presmooth, corner_deg)
     if ins:
         pts = inset(pts, ins, span=max(2, corner_span))
     corners = detect_corners(pts, corner_span, corner_deg)

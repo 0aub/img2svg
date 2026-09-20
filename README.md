@@ -140,8 +140,13 @@ all of them. The result measures well and looks like a blob, because a circle
 within half a pixel of round in a hundred independent places is visibly not
 round.
 
-Least-squares fitting (Schneider's algorithm) asks a different question: what
-single cubic comes closest to *all* these points at once. Noise symmetric about
+A short average is applied first, to take off noise the source itself carries -
+corners excepted, because smoothing runs before anything looks for a corner and
+a crisp vertex that has already become a gentle bend comes out of the fitter as
+an arc. Every angular joint in a line diagram quietly turns into a curve.
+
+Least-squares fitting (Schneider's algorithm) then asks a different question:
+what single cubic comes closest to *all* these points at once. Noise symmetric about
 the true edge cancels instead of accumulating. Curves are split only where one
 cubic genuinely cannot reach, and the tangent at each join is measured from both
 sides at once so the pieces meet smoothly rather than kinking.

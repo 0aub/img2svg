@@ -361,3 +361,47 @@ def test_isoline_beats_the_staircase_on_a_soft_edge():
 
     assert sub < 0.2, f"sub-pixel contour off by {sub:.3f}px"
     assert stair > 5 * sub, f"staircase {stair:.3f} should be far worse than {sub:.3f}"
+
+
+# --------------------------------------------------------------------------
+# coverage of a set, and corners through pre-smoothing
+
+def test_a_set_is_fully_covered_at_its_internal_boundaries():
+    """Where two members of the set meet, the set owns the whole pixel.
+
+    Returning only the pixel's own share reported half coverage along every
+    internal seam, and wherever that dipped under the isoline level it cut a
+    slit clean through the shape - a hairline hole straight through the artwork
+    and the card behind it.
+    """
+    from img2svg import coverage
+
+    pal = np.array([[255, 255, 255], [230, 167, 37], [160, 94, 28]], dtype=np.int16)
+    labels = np.zeros((9, 9), dtype=np.int16)
+    labels[:, 3:6] = 1
+    labels[:, 6:] = 2
+    rgb = pal[labels].astype(np.uint8)
+    rgb[:, 5] = ((pal[1] + pal[2]) // 2).astype(np.uint8)   # a half-and-half seam
+
+    other, alpha = coverage.neighbour_and_alpha(rgb, labels, pal)
+    art = coverage.field_for([1, 2], labels, other, alpha)
+    assert art[:, 4:].min() > 0.95, f"seam dips to {art[:, 4:].min():.3f}"
+    one = coverage.field_for(1, labels, other, alpha)
+    assert one[:, 7].max() < 0.05, "a class must not claim its neighbour's interior"
+
+
+def test_pre_smoothing_keeps_a_sharp_vertex():
+    """Smoothing runs before corner detection, so it has to spare the corners.
+
+    Otherwise a crisp vertex is a gentle bend by the time the fitter sees it,
+    and every angular joint in a line diagram quietly becomes a curve.
+    """
+    n = 60
+    arm = np.linspace(0, 40, n)
+    loop = ([(40 - t, 0.0) for t in arm] + [(0.0, t) for t in arm]
+            + [(t, 40.0) for t in arm] + [(40.0, 40 - t) for t in arm])
+    guarded = curves.smooth(loop, 4, corner_deg=50.0)
+    naive = curves.smooth(loop, 4)
+    corner = min(range(len(loop)), key=lambda i: loop[i][0] + loop[i][1])
+    moved = lambda p: abs(p[corner][0] - loop[corner][0]) + abs(p[corner][1] - loop[corner][1])
+    assert moved(guarded) < 0.2 < moved(naive)

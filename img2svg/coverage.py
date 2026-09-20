@@ -59,8 +59,15 @@ def field_for(classes, labels: np.ndarray, other: np.ndarray,
     """
     want = np.asarray([classes] if np.isscalar(classes) else list(classes))
     f = np.zeros(labels.shape, dtype=np.float32)
+
+    # Both contributions are added, which matters only for a set: at a boundary
+    # *inside* the set the pixel is split between two members and belongs to it
+    # entirely. Taking just the pixel's own share there reported half coverage
+    # along every internal seam, and wherever that fell below the isoline level
+    # it cut a slit clean through the shape - visible as a hairline hole
+    # straight through the artwork and the card behind it.
     mine = np.isin(labels, want)
-    f[mine] = alpha[mine]
-    theirs = np.isin(other, want) & ~mine
-    f[theirs] = 1.0 - alpha[theirs]
-    return f
+    f[mine] += alpha[mine]
+    theirs = np.isin(other, want)
+    f[theirs] += 1.0 - alpha[theirs]
+    return np.clip(f, 0.0, 1.0, out=f)
