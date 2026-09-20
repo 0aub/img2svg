@@ -289,7 +289,14 @@ print(verify.format_report(verify.compare(rgb, shot)))
 
 ## Limits
 
-- Gradients become flat regions. Faithful gradient emission is not implemented.
+- Gradients become flat regions. Emitting real `linearGradient`s was built and
+  measured before being dropped: on a gradient-heavy mark the fills were already
+  within 0.6 ΔE and the ramps were not where the error lived, so it bought
+  complexity and no accuracy.
+- Palette size is not an accuracy dial. Forcing more colours was swept from 24
+  down to 3 minimum separation: it makes every image *worse* and can multiply
+  the file size tenfold, because the extra entries slice smooth shading into
+  thin bands with noisy boundaries.
 - Semi-transparent interiors are not modelled; alpha is used only as a silhouette.
 - Strokes thinner than about 2 px may be eaten by segmentation; lower `--blur`.
 - Container detection is a stated rule, not a discovery — a solid mark that fills

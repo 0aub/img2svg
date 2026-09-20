@@ -6,6 +6,7 @@ import pytest
 
 from img2svg import matte, palette, raster, verify
 from img2svg.config import Config
+from img2svg.image import load
 from img2svg.pipeline import convert
 
 
@@ -176,8 +177,8 @@ def test_the_bundled_example_stays_faithful():
     res = convert(rgb, Config())
     shot = raster.render(res.svg, res.width, res.height, background=res.background_rgb)
     stats = verify.compare(rgb, shot)
-    assert stats["mean"] < 2.5, verify.format_report(stats)
-    assert res.segments < 900
+    assert stats["mean"] < 1.2, verify.format_report(stats)
+    assert res.segments < 1800
 
 
 def test_verify_defaults_to_the_sources_own_page_colour():
@@ -285,3 +286,28 @@ def test_snapping_is_opt_in():
     snapped = convert(img, Config(regularize=("circles",)))
     assert snapped.segments < plain.segments
     assert plain.svg != snapped.svg
+
+
+def test_stacked_layers_do_not_bias_every_edge_dark():
+    """Flat layers must be grown to hide seams, and growing them moves boundaries.
+
+    Draw order runs largest first, so the smaller darker regions land on top and
+    win the overlap: every edge in the image drifts outward into its lighter
+    neighbour and the whole thing acquires a dark halo. Stacked layers cover
+    what is drawn on them, so they need no growing and every edge sits true.
+    """
+    from img2svg import raster, verify
+
+    if raster.backend() is None:
+        pytest.skip("no SVG renderer installed")
+    rgb, _ = load(str(EXAMPLE))
+
+    def bias(cfg):
+        res = convert(rgb, cfg)
+        shot = raster.render(res.svg, res.width, res.height, background=res.background_rgb)
+        return float((verify.srgb_to_lab(shot)[..., 0] - verify.srgb_to_lab(rgb)[..., 0]).mean())
+
+    flat = bias(Config(layers="flat"))
+    stacked = bias(Config(layers="stacked"))
+    assert flat < -0.15, f"expected the flat halo, got {flat:+.3f}"
+    assert abs(stacked) < 0.08, f"stacked should be unbiased, got {stacked:+.3f}"

@@ -81,6 +81,8 @@ class Config:
     overlap: float = 0.5
     """*scaled* Grow each detail layer outward so neighbours cannot leave a seam.
 
+    Only used by ``layers='flat'``; stacked layers do not need it.
+
     Two regions traced separately abut exactly, and two abutting anti-aliased
     edges each contribute about half coverage, so whatever is underneath shows
     through as a hairline. When that underneath is a dark card it reads as an
@@ -93,12 +95,21 @@ class Config:
     obvious on a 16px sprite feature; art without anti-aliasing also has far
     less seam to hide.
     """
-    layers: str = "flat"
-    """'flat' draws each colour once; 'stacked' draws each over everything above it.
+    layers: str = "stacked"
+    """'stacked' draws each colour over everything above it; 'flat' draws it once.
 
-    Stacked cannot leak at all, needs no overlap fudge, and is a touch more
-    accurate. It costs roughly twice the path data on complex illustration
-    because every layer carries the union of the ones above it.
+    Stacked is the only construction that puts every visible boundary where it
+    belongs. Flat layers have to be grown slightly or they leave a hairline of
+    whatever is underneath at every shared edge - and growing them biases every
+    boundary outward by half a pixel. Since draw order runs largest first, the
+    smaller darker regions land on top and win that half pixel, so the whole
+    image acquires a dark halo along every edge: a systematic -0.27 L* on the
+    example icon, visible as a red outline in a difference map.
+
+    A layer that already covers everything drawn on top of it cannot leave a
+    gap, so it needs no growing and every edge sits true. Bias drops to -0.02.
+    The cost is path data, because each layer carries the union of the ones
+    above it; 'flat' is there when size matters more than a half pixel.
     """
 
     # ---- output -------------------------------------------------------

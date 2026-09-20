@@ -47,8 +47,8 @@ def _cfg_args(p: argparse.ArgumentParser) -> None:
                         "from whether the source is anti-aliased (default %.1f when it is)"
                         % d.overlap)
     g.add_argument("--layers", default=d.layers, choices=("flat", "stacked"),
-                   help="'stacked' cannot leak at all but roughly doubles the path "
-                        "data on complex art (default: %(default)s)")
+                   help="'flat' is smaller but biases every edge half a pixel "
+                        "outward (default: %(default)s)")
     g.add_argument("--no-autoscale", action="store_true",
                    help="treat the px defaults literally instead of scaling to image size")
 
