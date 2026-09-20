@@ -166,6 +166,7 @@ img2svg IMAGE [options]          # same as: img2svg convert IMAGE
 img2svg convert IMAGE [options]
 img2svg palette IMAGE            # show the extracted palette and coverage
 img2svg verify IMAGE SVG         # score an existing SVG against a raster
+                                 #   --against auto|HEX picks the page colour
 img2svg tune IMAGE [--budget N]  # search parameters (see the warning above)
 ```
 

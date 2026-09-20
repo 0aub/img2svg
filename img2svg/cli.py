@@ -158,17 +158,31 @@ def cmd_palette(a) -> int:
 
 
 def cmd_verify(a) -> int:
-    from .palette import hex_to_rgb
+    from .palette import hex_to_rgb, rgb_to_hex
 
     rgb, _, alpha = image.load_full(a.input)
     with open(a.svg, encoding="utf-8") as fh:
         svg = fh.read()
-    ground = tuple(int(v) for v in hex_to_rgb(a.against))
+    # Default to the page colour the source actually uses: scoring a transparent
+    # trace over white would otherwise measure the background, not the tracing.
+    ground = _page_colour(rgb) if a.against == "auto" else tuple(
+        int(v) for v in hex_to_rgb(a.against))
     shot = raster.render(svg, rgb.shape[1], rgb.shape[0], background=ground)
     stats = verify.compare(image.composite(rgb, alpha, ground), shot)
     print(f"{a.svg} vs {a.input}")
+    print(f"  scored against {rgb_to_hex(ground)}")
     print(verify.format_report(stats))
     return 0
+
+
+def _page_colour(rgb: np.ndarray):
+    from .matte import matte as run_matte, resolve_background
+
+    cfg = Config().scaled(rgb.shape[1], rgb.shape[0])
+    pal = palette.extract(rgb, cfg)
+    labels, _ = run_matte(rgb, pal)
+    bg = resolve_background(pal, labels, "auto")
+    return (255, 255, 255) if bg is None else tuple(int(v) for v in pal[bg])
 
 
 def cmd_tune(a) -> int:
@@ -217,8 +231,9 @@ def build_parser() -> argparse.ArgumentParser:
     c = sub.add_parser("verify", help="score an existing SVG against a raster")
     c.add_argument("input")
     c.add_argument("svg")
-    c.add_argument("--against", default="#FFFFFF", metavar="HEX",
-                   help="colour to composite the SVG over (default: %(default)s)")
+    c.add_argument("--against", default="auto", metavar="AUTO|HEX",
+                   help="colour to composite the SVG over; auto detects the "
+                        "source's page colour (default: %(default)s)")
     c.set_defaults(func=cmd_verify)
 
     c = sub.add_parser("tune", help="search parameters against the source")

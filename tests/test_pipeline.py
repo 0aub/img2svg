@@ -192,3 +192,12 @@ def test_the_bundled_example_stays_faithful():
     stats = verify.compare(rgb, shot)
     assert stats["mean"] < 2.5, verify.format_report(stats)
     assert res.segments < 1000
+
+
+def test_verify_defaults_to_the_sources_own_page_colour():
+    from img2svg.cli import _page_colour
+
+    img = np.full((80, 80, 3), (43, 108, 176), dtype=np.uint8)
+    img[20:60, 20:60] = (246, 224, 94)
+    assert _page_colour(img) == (43, 108, 176)
+    assert _page_colour(np.full((40, 40, 3), 255, dtype=np.uint8)) == (255, 255, 255)

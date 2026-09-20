@@ -8,4 +8,6 @@ dist/
 out/
 !examples/out/
 !examples/out/*.svg
+*.report.html
+examples/out/report.html
 *.out.svg
