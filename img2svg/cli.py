@@ -40,6 +40,9 @@ def _cfg_args(p: argparse.ArgumentParser) -> None:
                    help="discard regions under this many px (default: %(default)s)")
     g.add_argument("--corner", type=float, default=d.corner_deg, metavar="DEG",
                    help="turns sharper than this stay corners (default: %(default)s)")
+    g.add_argument("--keep-corners", default=d.keep_corners, choices=("auto", "on", "off"),
+                   help="hold corners back from smoothing; auto means only when "
+                        "--blur is 0 (default: %(default)s)")
     g.add_argument("--no-autoscale", action="store_true",
                    help="treat the px defaults literally instead of scaling to image size")
 
@@ -71,6 +74,7 @@ def _build_cfg(a: argparse.Namespace) -> Config:
         smooth_div=a.smooth_div,
         min_area=a.min_area,
         corner_deg=a.corner,
+        keep_corners=a.keep_corners,
         background=a.background,
         regularize=tuple(x for x in a.regularize.split(",") if x),
         precision=a.precision,
@@ -90,7 +94,7 @@ def _out_path(inp: str, given: Optional[str], suffix: str = ".svg") -> str:
 
 
 def cmd_convert(a) -> int:
-    rgb, opaque = image.load(a.input)
+    rgb, opaque, alpha = image.load_full(a.input)
     cfg = _build_cfg(a)
     res = convert(rgb, cfg, opaque)
 
@@ -105,6 +109,10 @@ def cmd_convert(a) -> int:
            len(res.svg.encode()) / 1024))
     for n in res.notes:
         say("  note: " + n)
+    if not res.layers:
+        print(f"img2svg: {a.input} produced an empty SVG - nothing flat enough to trace",
+              file=sys.stderr)
+        return 3
     stem = os.path.splitext(out)[0]
     for text, suffix in ((res.mark, ".mark.svg"), (res.mono, ".mono.svg")):
         if text:
@@ -113,16 +121,23 @@ def cmd_convert(a) -> int:
 
     if a.report or a.verify:
         try:
-            shot = raster.render(res.svg, res.width, res.height)
+            # Score against the same ground the SVG will sit on. Comparing a
+            # transparent trace to an opaque source over white measures the
+            # background we deliberately dropped, not the tracing.
+            ground = res.background_rgb
+            shot = raster.render(res.svg, res.width, res.height, background=ground)
         except raster.RendererMissing as e:
             print(f"  cannot verify: {e}", file=sys.stderr)
             return 0
-        mask = None if opaque is None else np.ones(rgb.shape[:2], dtype=bool)
-        stats = verify.compare(rgb, shot, mask=mask)
-        say(verify.format_report(stats))
+        src = image.composite(rgb, alpha, ground)
+        stats = verify.compare(src, shot)
+        # --verify was asked for explicitly, so -q does not silence it
+        if res.background_hex:
+            print(f"  scored against {res.background_hex} (the detected page colour)")
+        print(verify.format_report(stats))
         if a.report:
             rp = a.report if isinstance(a.report, str) else _out_path(a.input, None, ".report.html")
-            image.save_text(rp, report.build(rgb, res.svg, stats, res, cfg))
+            image.save_text(rp, report.build(src, res.svg, stats, res, cfg))
             say(f"  report -> {rp}")
     if a.json:
         print(json.dumps(res.summary(), indent=2))
@@ -143,11 +158,14 @@ def cmd_palette(a) -> int:
 
 
 def cmd_verify(a) -> int:
-    rgb, _ = image.load(a.input)
+    from .palette import hex_to_rgb
+
+    rgb, _, alpha = image.load_full(a.input)
     with open(a.svg, encoding="utf-8") as fh:
         svg = fh.read()
-    shot = raster.render(svg, rgb.shape[1], rgb.shape[0])
-    stats = verify.compare(rgb, shot)
+    ground = tuple(int(v) for v in hex_to_rgb(a.against))
+    shot = raster.render(svg, rgb.shape[1], rgb.shape[0], background=ground)
+    stats = verify.compare(image.composite(rgb, alpha, ground), shot)
     print(f"{a.svg} vs {a.input}")
     print(verify.format_report(stats))
     return 0
@@ -156,11 +174,11 @@ def cmd_verify(a) -> int:
 def cmd_tune(a) -> int:
     from .tune import run as tune_run
 
-    rgb, opaque = image.load(a.input)
+    rgb, opaque, alpha = image.load_full(a.input)
     cfg = _build_cfg(a)
     print(f"tuning on {a.input} (budget {a.budget})")
     best, trials = tune_run(rgb, cfg, opaque, budget=a.budget,
-                            curve_weight=a.curve_weight, log=print)
+                            curve_weight=a.curve_weight, log=print, alpha=alpha)
     print("\nbest: blur=%.1f rdp=%.1f smooth-div=%.0f" % (best.blur, best.rdp, best.smooth_div))
     res = convert(rgb, best, opaque)
     out = _out_path(a.input, a.output)
@@ -186,7 +204,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="write a self-contained HTML comparison")
     c.add_argument("--verify", action="store_true", help="print dE stats after tracing")
     c.add_argument("--json", action="store_true", help="dump a machine-readable summary")
-    c.add_argument("-q", "--quiet", action="store_true")
+    c.add_argument("-q", "--quiet", action="store_true",
+                   help="suppress the summary; --verify output still prints")
     _cfg_args(c)
     c.set_defaults(func=cmd_convert)
 
@@ -198,6 +217,8 @@ def build_parser() -> argparse.ArgumentParser:
     c = sub.add_parser("verify", help="score an existing SVG against a raster")
     c.add_argument("input")
     c.add_argument("svg")
+    c.add_argument("--against", default="#FFFFFF", metavar="HEX",
+                   help="colour to composite the SVG over (default: %(default)s)")
     c.set_defaults(func=cmd_verify)
 
     c = sub.add_parser("tune", help="search parameters against the source")

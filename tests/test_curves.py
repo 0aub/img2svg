@@ -61,3 +61,40 @@ def test_fmt_never_emits_negative_zero():
     assert curves.fmt(-0.004) == "0"
     assert curves.fmt(12.0) == "12"
     assert curves.fmt(12.25, 1) == "12.2" or curves.fmt(12.25, 1) == "12.3"
+
+
+def test_smoothing_leaves_a_sharp_corner_where_it_found_one():
+    """Round a blob all you like, but a right angle must survive to the fitter."""
+    (loop,) = curves.boundary_loops(_rect(h=40, w=40, pad=8))
+    guarded = curves.smooth(loop, 3, corner_deg=50.0)
+    naive = curves.smooth(loop, 3)
+    corner = min(range(len(loop)), key=lambda i: loop[i][0] + loop[i][1])
+    moved_guarded = abs(guarded[corner][0] - loop[corner][0]) + \
+                    abs(guarded[corner][1] - loop[corner][1])
+    moved_naive = abs(naive[corner][0] - loop[corner][0]) + \
+                  abs(naive[corner][1] - loop[corner][1])
+    assert moved_guarded < 0.1 < moved_naive
+
+
+def test_smoothing_still_rounds_a_curve():
+    import numpy as np
+
+    t = np.linspace(0, 2 * np.pi, 160, endpoint=False)
+    circle = [(50 + 20 * np.cos(a) + (0.6 if i % 2 else -0.6), 50 + 20 * np.sin(a))
+              for i, a in enumerate(t)]
+    out = curves.smooth(circle, 3, corner_deg=50.0)
+    jitter_in = max(abs(circle[i][0] - circle[i - 1][0]) for i in range(len(circle)))
+    jitter_out = max(abs(out[i][0] - out[i - 1][0]) for i in range(len(out)))
+    assert jitter_out < jitter_in
+
+
+def test_keep_corners_follows_the_blur_setting():
+    from img2svg.config import Config
+    from img2svg.regions import keep_corners
+
+    # soft art is smoothed, so protecting raw corners would facet the curves
+    assert keep_corners(Config(blur=6.0)) is False
+    # crisp labels, nothing to smooth away: hold the corners
+    assert keep_corners(Config(blur=0.0)) is True
+    assert keep_corners(Config(blur=6.0, keep_corners="on")) is True
+    assert keep_corners(Config(blur=0.0, keep_corners="off")) is False

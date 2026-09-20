@@ -1,4 +1,5 @@
 import xml.dom.minidom as minidom
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -65,6 +66,25 @@ def test_autoscale_scales_pixel_knobs():
     assert cfg.scaled(1024, 1024).blur == pytest.approx(6.0)
 
 
+def test_smoothing_window_shrinks_with_the_image():
+    """A fixed window is proportionally huge on a small sprite and eats corners."""
+    cfg = Config()
+    assert cfg.scaled(1024, 1024).smooth_min == 2
+    tiny = cfg.scaled(64, 64)
+    assert tiny.smooth_min == 0 and tiny.smooth_max == 1
+
+
+def test_square_corners_survive_on_a_small_sprite():
+    """A 16x23 rect on a 64px canvas must not come back with rounded corners."""
+    img = np.full((64, 64, 3), (27, 43, 52), dtype=np.uint8)
+    img[16:48, 16:48] = (255, 204, 51)
+    img[24:47, 24:40] = (204, 51, 68)
+    res = convert(img, Config())  # blur scales to 0 here, so corners are held
+    red = [l for l in res.layers if l.hex == "#CC3344"]
+    assert red, [l.hex for l in res.layers]
+    assert red[0].segments <= 6, "a rectangle should need four corners, not an arc"
+
+
 @pytest.mark.skipif(raster.backend() is None, reason="no SVG renderer installed")
 def test_trace_is_faithful_to_the_source(flat_art):
     res = convert(flat_art, Config())
@@ -105,3 +125,70 @@ def test_mono_silhouette_is_the_mark_not_the_card(flat_art):
     assert card[0] < mark[0] and card[1] < mark[1]
     assert card[2] > mark[2] and card[3] > mark[3]
     assert mark[0] > 50 and mark[2] < 210
+
+
+@pytest.mark.skipif(raster.backend() is None, reason="no SVG renderer installed")
+def test_a_coloured_page_is_scored_against_itself():
+    """The dropped background must be painted back before comparing.
+
+    Rendering a transparent trace over white and comparing it to a source with a
+    blue page measures the background we deliberately removed, not the tracing -
+    it reported dE 35 on artwork that was actually near perfect.
+    """
+    img = np.full((160, 200, 3), (43, 108, 176), dtype=np.uint8)
+    img[40:120, 50:150] = (246, 224, 94)
+    res = convert(img, Config())
+    assert res.background_hex == "#2B6CB0"
+    assert res.background_rgb == (43, 108, 176)
+
+    honest = raster.render(res.svg, res.width, res.height, background=res.background_rgb)
+    naive = raster.render(res.svg, res.width, res.height, background=(255, 255, 255))
+    assert verify.compare(img, honest)["mean"] < 1.0
+    assert verify.compare(img, naive)["mean"] > 10.0
+
+
+def test_empty_result_is_reported_not_hidden():
+    rng = np.random.default_rng(1)
+    noise = rng.integers(0, 255, (120, 120, 3), dtype=np.uint8)
+    res = convert(noise, Config())
+    assert res.layers == []
+    assert any("no flat regions" in n for n in res.notes)
+
+
+def test_composite_flattens_alpha_onto_the_chosen_ground():
+    from img2svg import image as img
+
+    rgb = np.zeros((4, 4, 3), dtype=np.uint8)
+    alpha = np.full((4, 4), 0.5, dtype=np.float32)
+    out = img.composite(rgb, alpha, (255, 255, 255))
+    assert out[0, 0].tolist() == [127, 127, 127]
+    assert img.composite(rgb, None, (255, 255, 255)) is rgb
+
+
+EXAMPLE = Path(__file__).resolve().parent.parent / "examples" / "honey-heart.png"
+
+
+@pytest.mark.skipif(not EXAMPLE.exists(), reason="bundled example missing")
+def test_organic_art_is_not_faceted_by_corner_protection():
+    """On real soft-shaded artwork, holding raw corners preserves the staircase
+    of every diagonal edge and inflates the curve count for nothing."""
+    from img2svg.image import load
+
+    rgb, _ = load(str(EXAMPLE))
+    auto = convert(rgb, Config())
+    forced = convert(rgb, Config(keep_corners="on"))
+    assert forced.segments > auto.segments * 1.1
+
+
+@pytest.mark.skipif(not EXAMPLE.exists(), reason="bundled example missing")
+@pytest.mark.skipif(raster.backend() is None, reason="no SVG renderer installed")
+def test_the_bundled_example_stays_faithful():
+    """Guard rail on the whole pipeline; loosen only with a reason."""
+    from img2svg.image import load
+
+    rgb, _ = load(str(EXAMPLE))
+    res = convert(rgb, Config())
+    shot = raster.render(res.svg, res.width, res.height, background=res.background_rgb)
+    stats = verify.compare(rgb, shot)
+    assert stats["mean"] < 2.5, verify.format_report(stats)
+    assert res.segments < 1000

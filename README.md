@@ -8,8 +8,9 @@ land where they belong, cleans up soft shading into honest flat shapes, and then
 **renders its own output back to pixels and scores it against the source** in
 CIEDE2000 so you know whether to trust it.
 
-```
-docker run --rm -v "$PWD:/work" ghcr.io/0aub/img2svg logo.png --verify
+```bash
+git clone https://github.com/0aub/img2svg && cd img2svg
+./img2svg.sh logo.png --report
 ```
 
 ## What it is for
@@ -24,20 +25,17 @@ Those are not "harder" for it, they are the wrong input.
 
 ## Install
 
-**Docker** (nothing else needed):
-
-```bash
-git clone https://github.com/0aub/img2svg && cd img2svg
-./img2svg.sh logo.png --report     # builds the image on first run
-```
-
-`img2svg.sh` mounts the working directory and runs as your user, so output lands
-next to the input with your ownership. Or drive Docker yourself:
+**Docker** (nothing else needed). `img2svg.sh` builds the image on first run,
+mounts the working directory and runs as your user, so output lands next to the
+input with your ownership. Or drive Docker yourself:
 
 ```bash
 docker build -t img2svg .
 docker run --rm -u "$(id -u):$(id -g)" -v "$PWD:/work" img2svg logo.png
 ```
+
+Tagging a release (`git tag v0.1.0 && git push --tags`) publishes
+`ghcr.io/0aub/img2svg` from CI, after which no clone is needed.
 
 **pip**, if you would rather not use Docker:
 
@@ -118,6 +116,14 @@ pulled half a pixel inward: the walk traces the *outside* of the boundary pixels
 but those pixels were chosen because their *centres* are inside, so every region
 otherwise comes out fat.
 
+Smoothing runs before corner detection, so a hard right angle is already two soft
+45° turns by the time anything looks for it and comes out as an arc. On hard-edged
+art each point is held back from smoothing in proportion to how sharply the raw
+contour turns there. On *organic* art that is actively harmful — the raw contour
+of a smooth diagonal is a staircase, and protecting those steps facets the curve —
+so it keys off the blur radius, which is already the answer to "does this artwork
+have soft edges".
+
 **6. Assembly** — the silhouette is drawn once as a base, and every detail layer
 is clipped to it. That lets details be drawn a hair oversized so neighbours
 overlap instead of leaving hairline seams, while the outline of the artwork stays
@@ -126,6 +132,12 @@ exactly where the base put it.
 **7. Verification** — render the SVG, convert both images to Lab, score CIEDE2000
 per pixel, and rank 32 px blocks. RGB distance would call a two-pixel edge shift
 and a flat area being three units off the same size of mistake. They are not.
+
+The render is composited over the *detected page colour*, not white, and a
+transparent source is flattened onto the same ground. Comparing a transparent
+trace to an opaque source over white measures the background you deliberately
+dropped: it reported ΔE 35 on a blue-page test image whose artwork was actually
+near perfect.
 
 ## Fidelity is not taste
 
@@ -175,8 +187,11 @@ img2svg tune IMAGE [--budget N]  # search parameters (see the warning above)
 | `--rdp E` | curve simplification tolerance in px (default 2.2) |
 | `--smooth-div N` | contour length ÷ N sets the smoothing window (default 45) |
 | `--min-area A` | discard regions under this many px (default 120) |
+| `--keep-corners auto\|on\|off` | hold corners back from smoothing (default auto) |
 | `--precision N` | decimals kept in path data (default 1) |
 | `--json` | machine-readable summary on stdout |
+
+Exit codes: `0` success, `2` input not found, `3` nothing flat enough to trace.
 
 Pixel-valued defaults are quoted for a 1024 px image and scale with the input, so
 they behave the same on a 256 px sprite and a 4096 px poster. `--no-autoscale`
@@ -190,6 +205,9 @@ noise instead.
 Too many curves → raise `--rdp`.
 Corners softened that should be sharp → lower `--corner`.
 A colour that matters got merged away → lower `--min-sep`, or pass `--palette`.
+Pixel art you want to stay blocky → `--blur 0 --rdp 0.4 --smooth-div 400`.
+Right angles coming back rounded → `--keep-corners on`.
+Smooth curves coming back faceted → `--keep-corners off`.
 
 ## Python
 

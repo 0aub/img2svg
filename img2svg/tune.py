@@ -16,7 +16,7 @@ import numpy as np
 
 from .config import Config
 from .pipeline import convert
-from . import raster, verify
+from . import image, raster, verify
 
 
 @dataclass
@@ -40,7 +40,7 @@ def score(mean_de: float, segments: int, weight: float) -> float:
 
 def run(rgb: np.ndarray, cfg: Config, opaque=None, budget: int = 18,
         curve_weight: float = 0.5, mask: Optional[np.ndarray] = None,
-        log=None) -> Tuple[Config, List[Trial]]:
+        log=None, alpha=None) -> Tuple[Config, List[Trial]]:
     """Coordinate descent, one axis at a time, best-so-far kept."""
     trials: List[Trial] = []
     cache: Dict[Tuple, Trial] = {}
@@ -51,8 +51,8 @@ def run(rgb: np.ndarray, cfg: Config, opaque=None, budget: int = 18,
         if key in cache:
             return cache[key]
         res = convert(rgb, c, opaque)
-        out = raster.render(res.svg, w, h)
-        st = verify.compare(rgb, out, mask=mask)
+        out = raster.render(res.svg, w, h, background=res.background_rgb)
+        st = verify.compare(image.composite(rgb, alpha, res.background_rgb), out, mask=mask)
         t = Trial({"blur": c.blur, "rdp": c.rdp, "smooth_div": c.smooth_div},
                   st["mean"], res.segments, score(st["mean"], res.segments, curve_weight))
         cache[key] = t

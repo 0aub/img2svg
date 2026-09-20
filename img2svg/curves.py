@@ -13,7 +13,7 @@ region comes out fat, and adjacent regions overlap by a full pixel.
 from __future__ import annotations
 
 import math
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -96,8 +96,15 @@ def polygon_area(loop: Sequence[Point]) -> float:
     return 0.5 * float(np.dot(x, np.roll(y, -1)) - np.dot(np.roll(x, -1), y))
 
 
-def smooth(loop: Sequence[Point], k: int) -> Loop:
-    """Circular moving average; ``k`` points either side."""
+def smooth(loop: Sequence[Point], k: int, corner_deg: Optional[float] = None) -> Loop:
+    """Circular moving average, ``k`` points either side, corners held back.
+
+    Smoothing runs before corner detection, so without this a hard 90 degree turn
+    is already two soft 45 degree ones by the time anything looks for it, and it
+    comes out of the fitter as an arc.  Each point is blended back toward its raw
+    position in proportion to how sharply the raw contour turns there, so round
+    things stay round and square things stay square.
+    """
     if k < 1:
         return list(loop)
     p = np.asarray(loop, dtype=np.float64)
@@ -105,11 +112,35 @@ def smooth(loop: Sequence[Point], k: int) -> Loop:
     k = min(k, max(n // 2 - 1, 0))
     if k < 1:
         return list(loop)
+
     acc = np.zeros_like(p)
     for j in range(-k, k + 1):
         acc += np.roll(p, j, axis=0)
     acc /= (2 * k + 1)
+
+    if corner_deg is not None:
+        # A real corner keeps turning when you step back and look wider; a pixel
+        # staircase on a shallow slope turns 90 degrees at every step and then
+        # immediately turns back. Requiring the turn to hold at two scales tells
+        # them apart, which keeps square things square without dragging the
+        # staircase of every diagonal edge into the output.
+        w = np.minimum(_turn_weight(p, k, corner_deg),
+                       _turn_weight(p, min(2 * k, max(n // 2 - 1, 1)), corner_deg))
+        w = np.maximum.reduce([w, np.roll(w, 1), np.roll(w, -1)])[:, None]
+        acc = p * w + acc * (1.0 - w)
+
     return [tuple(v) for v in acc]
+
+
+def _turn_weight(p: np.ndarray, span: int, corner_deg: float) -> np.ndarray:
+    """How corner-like each point is, judged over +/- ``span`` points."""
+    span = max(int(span), 1)
+    a = p - np.roll(p, span, axis=0)
+    b = np.roll(p, -span, axis=0) - p
+    turn = np.degrees(np.abs(np.arctan2(b[:, 1], b[:, 0])
+                             - np.arctan2(a[:, 1], a[:, 0]))) % 360.0
+    turn = np.minimum(turn, 360.0 - turn)
+    return np.clip((turn - corner_deg) / max(90.0 - corner_deg, 1.0), 0.0, 1.0)
 
 
 def inset(loop: Sequence[Point], dist: float) -> Loop:
@@ -226,8 +257,9 @@ def path_d(start: Point, segs, prec: int = 1) -> str:
 
 
 def loop_to_path(loop: Sequence[Point], *, smooth_k: int, eps: float,
-                 ins: float, corner_deg: float, prec: int) -> Tuple[str, int]:
-    pts = smooth(loop, smooth_k)
+                 ins: float, corner_deg: float, prec: int,
+                 keep_corners: bool = False) -> Tuple[str, int]:
+    pts = smooth(loop, smooth_k, corner_deg if keep_corners else None)
     if ins:
         pts = inset(pts, ins)
     pts = rdp(pts, eps)

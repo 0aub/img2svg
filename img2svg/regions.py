@@ -12,6 +12,17 @@ from .config import Config
 from . import curves
 
 
+def keep_corners(cfg: Config) -> bool:
+    """Should smoothing hold corners back? See Config.keep_corners."""
+    if cfg.keep_corners == "on":
+        return True
+    if cfg.keep_corners == "off":
+        return False
+    if cfg.keep_corners != "auto":
+        raise ValueError("--keep-corners takes auto, on or off")
+    return int(round(cfg.blur)) < 1
+
+
 @dataclass
 class Region:
     label: int
@@ -67,6 +78,7 @@ def region_path(mask: np.ndarray, cfg: Config, ins: float) -> Tuple[str, int]:
         d, n = curves.loop_to_path(
             loop, smooth_k=k, eps=cfg.rdp, ins=ins,
             corner_deg=cfg.corner_deg, prec=cfg.precision,
+            keep_corners=keep_corners(cfg),
         )
         if d:
             parts.append(d)

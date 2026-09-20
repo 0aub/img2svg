@@ -29,6 +29,7 @@ class Result:
     palette: np.ndarray
     background: Optional[int]
     base_hex: Optional[str]
+    background_hex: Optional[str] = None
     layers: List[LayerInfo] = field(default_factory=list)
     mono: Optional[str] = None
     mark: Optional[str] = None
@@ -39,6 +40,13 @@ class Result:
     @property
     def segments(self) -> int:
         return sum(l.segments for l in self.layers)
+
+    @property
+    def background_rgb(self):
+        """What the renderer must paint behind the SVG for a fair comparison."""
+        if self.background is None:
+            return (255, 255, 255)
+        return tuple(int(v) for v in self.palette[self.background])
 
     def summary(self) -> Dict:
         return {
@@ -116,8 +124,15 @@ def convert(rgb: np.ndarray, cfg: Config, opaque: Optional[np.ndarray] = None) -
                                        + " silhouette", cfg.desc or "")
 
     base_hex = infos[0].hex if infos else None
+    if not infos:
+        notes.append(
+            "no flat regions survived - this image may not be flat art, or "
+            "--min-area / --min-frac may be too high"
+        )
     return Result(svg=svg, width=w, height=h, palette=pal, background=bg,
-                  base_hex=base_hex, layers=infos, mono=mono, mark=mark,
+                  base_hex=base_hex,
+                  background_hex=None if bg is None else palette.rgb_to_hex(pal[bg]),
+                  layers=infos, mono=mono, mark=mark,
                   container=container, labels=labels, notes=notes)
 
 

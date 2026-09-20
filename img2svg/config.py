@@ -48,9 +48,20 @@ class Config:
     smooth_div: float = 45.0
     """Smoothing window = contour length / this."""
     smooth_min: int = 2
+    """*scaled* Floor on the smoothing window."""
     smooth_max: int = 22
+    """*scaled* Ceiling on the smoothing window."""
     corner_deg: float = 50.0
     """Turns sharper than this keep a hard corner instead of a smooth tangent."""
+    keep_corners: str = "auto"
+    """Hold corners back from smoothing: 'auto' (only when blur is off), 'on', 'off'.
+
+    On hard-edged art - pixel sprites, UI, anything with real right angles - this
+    is what stops a square coming back as a squircle.  On organic artwork it is
+    actively harmful: the raw contour of a smooth diagonal is a staircase, and
+    protecting those steps facets the curve.  'auto' keys off the blur radius,
+    which is already the answer to "does this artwork have soft edges".
+    """
     inset: float = 0.5
     """*scaled* Pull contours inward; 0.5 undoes the half-pixel of the pixel grid."""
 
@@ -73,7 +84,8 @@ class Config:
     autoscale: bool = True
 
     # ------------------------------------------------------------------
-    SCALED = ("blur", "min_area", "min_hole_area", "rdp", "inset")
+    SCALED = ("blur", "min_area", "min_hole_area", "rdp", "inset",
+              "smooth_min", "smooth_max")
 
     def scaled(self, width: int, height: int) -> "Config":
         """Return a copy with *scaled* fields adjusted for this image size."""
@@ -82,8 +94,12 @@ class Config:
         k = max(width, height) / 1024.0
         out = dataclasses.replace(self)
         for name in self.SCALED:
-            v = getattr(out, name)
-            setattr(out, name, v * (k * k if name in ("min_area", "min_hole_area") else k))
+            v = getattr(out, name) * (k * k if name in ("min_area", "min_hole_area") else k)
+            if name == "smooth_min":
+                v = max(0, int(v))
+            elif name == "smooth_max":
+                v = max(1, int(v))
+            setattr(out, name, v)
         return out
 
     def replace(self, **kw) -> "Config":
