@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "img2svg"
+version = "0.1.0"
+description = "Redraw flat and cel-shaded raster art as clean, verified SVG."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+authors = [{ name = "0aub" }]
+keywords = ["svg", "vector", "tracing", "vectorization", "logo", "raster"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: Apache Software License",
+  "Topic :: Multimedia :: Graphics :: Graphics Conversion",
+]
+dependencies = [
+  "numpy>=1.23",
+  "scipy>=1.9",
+  "pillow>=9.2",
+]
+
+[project.optional-dependencies]
+render = ["cairosvg>=2.7"]
+dev = ["pytest>=7.4"]
+
+[project.scripts]
+img2svg = "img2svg.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/0aub/img2svg"
+Issues = "https://github.com/0aub/img2svg/issues"
+
+[tool.setuptools.packages.find]
+include = ["img2svg*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

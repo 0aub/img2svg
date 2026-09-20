@@ -1,0 +1,231 @@
+"""img2svg command line."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from typing import List, Optional
+
+import numpy as np
+
+from . import __version__, image, palette, raster, report, verify
+from .config import Config
+from .pipeline import convert
+
+COMMANDS = ("convert", "palette", "verify", "tune", "version")
+
+
+def _cfg_args(p: argparse.ArgumentParser) -> None:
+    d = Config()
+    g = p.add_argument_group("palette")
+    g.add_argument("--colors", type=int, default=d.max_colors, metavar="N",
+                   help="ceiling on palette size (default: %(default)s)")
+    g.add_argument("--palette", metavar="HEX,HEX,...",
+                   help="use this exact palette and skip extraction")
+    g.add_argument("--min-sep", type=float, default=d.min_sep, metavar="D",
+                   help="minimum RGB distance between palette entries (default: %(default)s)")
+    g.add_argument("--min-frac", type=float, default=d.min_frac, metavar="F",
+                   help="drop colours below this share of flat pixels (default: %(default)s)")
+
+    g = p.add_argument_group("shape")
+    g.add_argument("--blur", type=float, default=d.blur, metavar="R",
+                   help="label smoothing radius; 0 disables (default: %(default)s)")
+    g.add_argument("--rdp", type=float, default=d.rdp, metavar="E",
+                   help="curve simplification tolerance in px (default: %(default)s)")
+    g.add_argument("--smooth-div", type=float, default=d.smooth_div, metavar="N",
+                   help="contour length / N sets the smoothing window (default: %(default)s)")
+    g.add_argument("--min-area", type=float, default=d.min_area, metavar="A",
+                   help="discard regions under this many px (default: %(default)s)")
+    g.add_argument("--corner", type=float, default=d.corner_deg, metavar="DEG",
+                   help="turns sharper than this stay corners (default: %(default)s)")
+    g.add_argument("--no-autoscale", action="store_true",
+                   help="treat the px defaults literally instead of scaling to image size")
+
+    g = p.add_argument_group("output")
+    g.add_argument("--background", default=d.background, metavar="AUTO|NONE|HEX",
+                   help="which colour is the page behind the art (default: %(default)s)")
+    g.add_argument("--regularize", default="", metavar="LIST",
+                   help="comma separated shape snapping; supports 'container'")
+    g.add_argument("--precision", type=int, default=d.precision, metavar="N",
+                   help="decimals kept in path data (default: %(default)s)")
+    g.add_argument("--mono", action="store_true", help="also write a currentColor silhouette")
+    g.add_argument("--mark", action="store_true",
+                   help="also write the artwork with its container card removed")
+    g.add_argument("--container", default=d.container, choices=("auto", "keep"),
+                   help="lift a dominant background card out of --mark/--mono "
+                        "(default: %(default)s)")
+    g.add_argument("--title", help="SVG <title>")
+    g.add_argument("--desc", help="SVG <desc>")
+
+
+def _build_cfg(a: argparse.Namespace) -> Config:
+    return Config(
+        max_colors=a.colors,
+        min_sep=a.min_sep,
+        min_frac=a.min_frac,
+        palette=[c.strip() for c in a.palette.split(",")] if a.palette else None,
+        blur=a.blur,
+        rdp=a.rdp,
+        smooth_div=a.smooth_div,
+        min_area=a.min_area,
+        corner_deg=a.corner,
+        background=a.background,
+        regularize=tuple(x for x in a.regularize.split(",") if x),
+        precision=a.precision,
+        mono=a.mono,
+        mark=a.mark,
+        container=a.container,
+        title=a.title,
+        desc=a.desc,
+        autoscale=not a.no_autoscale,
+    )
+
+
+def _out_path(inp: str, given: Optional[str], suffix: str = ".svg") -> str:
+    if given:
+        return given
+    return os.path.splitext(inp)[0] + suffix
+
+
+def cmd_convert(a) -> int:
+    rgb, opaque = image.load(a.input)
+    cfg = _build_cfg(a)
+    res = convert(rgb, cfg, opaque)
+
+    out = _out_path(a.input, a.output)
+    image.save_text(out, res.svg)
+    say = (lambda *x: None) if a.quiet else print
+
+    say(f"{a.input}  ->  {out}")
+    say("  %d x %d  ~  %d colours, %d regions, %d curves, %.1f KB"
+        % (res.width, res.height, len(res.palette),
+           sum(l.regions for l in res.layers), res.segments,
+           len(res.svg.encode()) / 1024))
+    for n in res.notes:
+        say("  note: " + n)
+    stem = os.path.splitext(out)[0]
+    for text, suffix in ((res.mark, ".mark.svg"), (res.mono, ".mono.svg")):
+        if text:
+            image.save_text(stem + suffix, text)
+            say(f"  {suffix.strip('.').split('.')[0]:<4} -> {stem + suffix}")
+
+    if a.report or a.verify:
+        try:
+            shot = raster.render(res.svg, res.width, res.height)
+        except raster.RendererMissing as e:
+            print(f"  cannot verify: {e}", file=sys.stderr)
+            return 0
+        mask = None if opaque is None else np.ones(rgb.shape[:2], dtype=bool)
+        stats = verify.compare(rgb, shot, mask=mask)
+        say(verify.format_report(stats))
+        if a.report:
+            rp = a.report if isinstance(a.report, str) else _out_path(a.input, None, ".report.html")
+            image.save_text(rp, report.build(rgb, res.svg, stats, res, cfg))
+            say(f"  report -> {rp}")
+    if a.json:
+        print(json.dumps(res.summary(), indent=2))
+    return 0
+
+
+def cmd_palette(a) -> int:
+    rgb, _ = image.load(a.input)
+    cfg = _build_cfg(a).scaled(rgb.shape[1], rgb.shape[0])
+    pal = palette.extract(rgb, cfg)
+    from .matte import matte as run_matte
+
+    labels, _ = run_matte(rgb, pal)
+    shares = np.bincount(labels.ravel(), minlength=len(pal)) / labels.size
+    print(f"{a.input}: {len(pal)} colours")
+    print(palette.describe(pal, shares))
+    return 0
+
+
+def cmd_verify(a) -> int:
+    rgb, _ = image.load(a.input)
+    with open(a.svg, encoding="utf-8") as fh:
+        svg = fh.read()
+    shot = raster.render(svg, rgb.shape[1], rgb.shape[0])
+    stats = verify.compare(rgb, shot)
+    print(f"{a.svg} vs {a.input}")
+    print(verify.format_report(stats))
+    return 0
+
+
+def cmd_tune(a) -> int:
+    from .tune import run as tune_run
+
+    rgb, opaque = image.load(a.input)
+    cfg = _build_cfg(a)
+    print(f"tuning on {a.input} (budget {a.budget})")
+    best, trials = tune_run(rgb, cfg, opaque, budget=a.budget,
+                            curve_weight=a.curve_weight, log=print)
+    print("\nbest: blur=%.1f rdp=%.1f smooth-div=%.0f" % (best.blur, best.rdp, best.smooth_div))
+    res = convert(rgb, best, opaque)
+    out = _out_path(a.input, a.output)
+    image.save_text(out, res.svg)
+    print(f"wrote {out}  ({res.segments} curves, {len(res.svg.encode()) / 1024:.1f} KB)")
+    print("\nreminder: this optimises fidelity, which is not the same as taste.")
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="img2svg",
+        description="Redraw flat and cel-shaded raster art as clean, verified SVG.",
+        epilog="run `img2svg convert IMAGE` or just `img2svg IMAGE`",
+    )
+    p.add_argument("--version", action="version", version=f"img2svg {__version__}")
+    sub = p.add_subparsers(dest="cmd")
+
+    c = sub.add_parser("convert", help="trace an image to SVG")
+    c.add_argument("input")
+    c.add_argument("-o", "--output", help="output path (default: alongside the input)")
+    c.add_argument("--report", nargs="?", const=True, default=False,
+                   help="write a self-contained HTML comparison")
+    c.add_argument("--verify", action="store_true", help="print dE stats after tracing")
+    c.add_argument("--json", action="store_true", help="dump a machine-readable summary")
+    c.add_argument("-q", "--quiet", action="store_true")
+    _cfg_args(c)
+    c.set_defaults(func=cmd_convert)
+
+    c = sub.add_parser("palette", help="show the extracted palette")
+    c.add_argument("input")
+    _cfg_args(c)
+    c.set_defaults(func=cmd_palette)
+
+    c = sub.add_parser("verify", help="score an existing SVG against a raster")
+    c.add_argument("input")
+    c.add_argument("svg")
+    c.set_defaults(func=cmd_verify)
+
+    c = sub.add_parser("tune", help="search parameters against the source")
+    c.add_argument("input")
+    c.add_argument("-o", "--output")
+    c.add_argument("--budget", type=int, default=18, help="max trials (default: %(default)s)")
+    c.add_argument("--curve-weight", type=float, default=0.5,
+                   help="dE cost charged per 1000 curves (default: %(default)s)")
+    _cfg_args(c)
+    c.set_defaults(func=cmd_tune)
+    return p
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] not in COMMANDS and not argv[0].startswith("-"):
+        argv.insert(0, "convert")  # `img2svg logo.png` just works
+    p = build_parser()
+    a = p.parse_args(argv)
+    if not getattr(a, "func", None):
+        p.print_help()
+        return 1
+    try:
+        return a.func(a)
+    except FileNotFoundError as e:
+        print(f"img2svg: {e}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
