@@ -23,7 +23,7 @@ CHUNK = 1 << 21  # pixels per block, keeps peak memory near 100 MB
 
 
 def matte(img: np.ndarray, pal: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-    """Label every pixel, and report how well the two-colour model fit it.
+    """Label every pixel, and report how well the model fit it.
 
     Returns ``(labels, residual)`` where ``labels`` indexes ``pal`` and
     ``residual`` is the RGB distance left over - high values mean the pixel is
@@ -36,21 +36,25 @@ def matte(img: np.ndarray, pal: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
 
     labels = np.zeros(len(flat), dtype=np.int16)
     resid = np.full(len(flat), np.inf, dtype=np.float32)
-
+    tol = _solid_tolerance(P)
     pairs = [(i, j) for i in range(k) for j in range(i + 1, k)]
 
     for start in range(0, len(flat), CHUNK):
         px = flat[start : start + CHUNK]
-        best = np.full(len(px), np.inf, dtype=np.float32)
-        lab = np.zeros(len(px), dtype=np.int16)
 
-        for i in range(k):  # pure colours
+        # 1. nearest single colour, and how far off it is
+        solo = np.full(len(px), np.inf, dtype=np.float32)
+        solo_lab = np.zeros(len(px), dtype=np.int16)
+        for i in range(k):
             r = ((px - P[i]) ** 2).sum(1)
-            upd = r < best
-            best[upd] = r[upd]
-            lab[upd] = i
+            upd = r < solo
+            solo[upd] = r[upd]
+            solo_lab[upd] = i
 
-        for i, j in pairs:  # every two-colour mixture
+        # 2. best two-colour mixture
+        best = solo.copy()
+        lab = solo_lab.copy()
+        for i, j in pairs:
             d = P[i] - P[j]
             l2 = float(d @ d)
             if l2 < 1e-6:
@@ -63,10 +67,34 @@ def matte(img: np.ndarray, pal: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
                 best[upd] = r[upd]
                 lab[upd] = np.where(a[upd] >= 0.5, i, j)
 
+        # 3. A pixel that already *is* a palette colour keeps it. Two flat
+        #    colours can always be mixed to land a hair closer to a third, and
+        #    letting that win hands interior pixels to a colour they look
+        #    nothing like - it repainted a dipper handle two shades too dark.
+        solid = solo <= tol * tol
+        lab[solid] = solo_lab[solid]
+        best[solid] = solo[solid]
+
         labels[start : start + CHUNK] = lab
         resid[start : start + CHUNK] = np.sqrt(best)
 
     return labels.reshape(h, w), resid.reshape(h, w)
+
+
+def _solid_tolerance(P: np.ndarray) -> float:
+    """How close counts as "this pixel is that colour", from the palette itself.
+
+    Half the distance to the nearest other entry: inside that radius no mixture
+    of two other colours is a more honest explanation than the colour itself.
+    """
+    if len(P) < 2:
+        return 1e9
+    # float first: a palette is int16 by default and (255-0)**2 overflows it,
+    # which turns the tolerance into NaN and silently disables the whole check
+    Q = np.asarray(P, dtype=np.float64)
+    d = np.sqrt(((Q[:, None, :] - Q[None, :, :]) ** 2).sum(-1))
+    np.fill_diagonal(d, np.inf)
+    return float(d.min()) * 0.5
 
 
 def detect_background(labels: np.ndarray, k: int, mode: str = "auto") -> Optional[int]:

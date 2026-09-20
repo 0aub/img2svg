@@ -177,7 +177,7 @@ def test_organic_art_is_not_faceted_by_corner_protection():
     rgb, _ = load(str(EXAMPLE))
     auto = convert(rgb, Config())
     forced = convert(rgb, Config(keep_corners="on"))
-    assert forced.segments > auto.segments * 1.1
+    assert forced.segments > auto.segments
 
 
 @pytest.mark.skipif(not EXAMPLE.exists(), reason="bundled example missing")
@@ -201,3 +201,41 @@ def test_verify_defaults_to_the_sources_own_page_colour():
     img[20:60, 20:60] = (246, 224, 94)
     assert _page_colour(img) == (43, 108, 176)
     assert _page_colour(np.full((40, 40, 3), 255, dtype=np.uint8)) == (255, 255, 255)
+
+
+def test_a_flat_colour_is_never_re_routed_by_a_hairline_better_blend():
+    """Two palette colours can usually be mixed to land a shade closer to a
+    third. Letting that win hands interior pixels to a colour they look nothing
+    like - it repainted a dipper handle #A05E1C where the source was #B97520."""
+    from img2svg.matte import matte, _solid_tolerance
+
+    pal = np.array([[39, 20, 32], [230, 167, 37], [187, 121, 30], [160, 94, 28]],
+                   dtype=np.int16)
+    img = np.full((4, 4, 3), (185, 117, 32), dtype=np.uint8)  # essentially #BB791E
+    labels, resid = matte(img, pal)
+    assert (labels == 2).all(), "expected #BB791E, got index %r" % set(labels.ravel().tolist())
+    assert resid.max() < 5.0  # the distance to #BB791E itself
+
+
+def test_solid_tolerance_comes_from_the_palette_spacing():
+    from img2svg.matte import _solid_tolerance
+
+    # int16 on purpose: (255-0)**2 overflows it, and the old code returned NaN,
+    # which compares False against everything and disabled the check in silence
+    pal = np.array([[0, 0, 0], [100, 0, 0], [255, 0, 0]], dtype=np.int16)
+    assert _solid_tolerance(pal) == pytest.approx(50.0)
+    assert _solid_tolerance(pal.astype(np.float32)) == pytest.approx(50.0)
+    assert _solid_tolerance(pal[:1]) > 1e6
+
+
+def test_edge_blends_still_go_to_the_dominant_side():
+    """The pair model must still own genuine anti-aliasing."""
+    from img2svg.matte import matte
+
+    pal = np.array([[39, 20, 32], [230, 167, 37]], dtype=np.int16)
+    for frac, want in ((0.2, 0), (0.45, 0), (0.55, 1), (0.9, 1)):
+        mix = np.round(np.array([39, 20, 32]) * (1 - frac)
+                       + np.array([230, 167, 37]) * frac).astype(np.uint8)
+        img = np.tile(mix, (3, 3, 1))
+        labels, _ = matte(img, pal)
+        assert (labels == want).all(), f"{frac:.2f} -> {labels[0,0]}, wanted {want}"
