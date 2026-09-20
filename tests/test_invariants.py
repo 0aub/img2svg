@@ -79,18 +79,27 @@ def test_a_hard_edged_source_is_not_inset_at_all():
 
 
 def test_a_curve_survives_the_whole_chain_within_a_pixel():
-    """smooth -> inset -> rdp -> bezier must not drift off the shape."""
-    m = _disc(70.0)
-    (loop,) = curves.boundary_loops(m)
+    """isoline -> fit must land on the shape and stay there.
+
+    Fed the production input - a coverage field, not the pixel grid - because
+    the grid's own staircase is a whole pixel wide and would force the fitter to
+    chase it.
+    """
+    from img2svg import isoline
+
+    size = 200
+    yy, xx = np.mgrid[0:size, 0:size]
+    field = np.clip(70.0 - np.hypot(xx + 0.5 - 100.0, yy + 0.5 - 100.0) + 0.5, 0, 1)
+    loop = max(isoline.contours(field, 0.5), key=len)
     cfg = Config()
-    d, n = curves.loop_to_path(loop, smooth_k=8, eps=2.0, ins=0.5,
-                               corner_deg=cfg.corner_deg, prec=3)
+    d, n = curves.loop_to_path(loop, tolerance=cfg.tolerance, ins=0.5,
+                               corner_deg=cfg.corner_deg, corner_span=7, prec=3,
+                               presmooth=3)
     pts = _sample_path(d)
-    c = 99.5
-    radii = np.hypot(pts[:, 0] - c, pts[:, 1] - c)
-    assert abs(radii.mean() - np.sqrt(70.0 * 70.0 - 70.0)) < 0.25
-    assert radii.std() < 0.6, "the fitted curve wobbles off the circle"
-    assert n < 30
+    radii = np.hypot(pts[:, 0] - 100.0, pts[:, 1] - 100.0)
+    assert abs(radii.mean() - 69.5) < 0.25, radii.mean()
+    assert radii.std() < 0.12, "the fitted curve wobbles off the circle"
+    assert n < 16, f"{n} cubics for one circle"
 
 
 def _sample_path(d: str, per_seg: int = 12) -> np.ndarray:
@@ -328,10 +337,27 @@ def test_fine_detail_survives_the_round_trip():
     assert xor < 0.02 * img.shape[0] * img.shape[1], "disagreement is more than an edge band"
 
 
-def test_smoothing_window_is_capped_by_shape_size_not_canvas_size():
+def test_corner_window_is_capped_by_shape_size_not_canvas_size():
     from img2svg import regions
 
-    small = 40.0 ** 2      # a 40px feature
-    big = 400.0 ** 2
-    assert regions.SMOOTH_OF_EXTENT * np.sqrt(small) < 3
-    assert regions.SMOOTH_OF_EXTENT * np.sqrt(big) > 20
+    assert regions.CORNER_OF_EXTENT * 40.0 < 3        # a 40px feature
+    assert regions.CORNER_OF_EXTENT * 400.0 > 20
+
+
+def test_isoline_beats_the_staircase_on_a_soft_edge():
+    """The whole reason contours are read from coverage rather than the grid."""
+    from img2svg import isoline
+
+    size, R = 300, 90.0
+    yy, xx = np.mgrid[0:size, 0:size]
+    d = np.hypot(xx + 0.5 - 150.0, yy + 0.5 - 150.0)
+    field = np.clip(R - d + 0.5, 0, 1)
+
+    p = np.asarray(max(isoline.contours(field, 0.5), key=len))
+    sub = np.abs(np.hypot(p[:, 0] - 150.0, p[:, 1] - 150.0) - R).max()
+
+    q = np.asarray(curves.boundary_loops(field >= 0.5)[0])
+    stair = np.abs(np.hypot(q[:, 0] - 150.0, q[:, 1] - 150.0) - R).max()
+
+    assert sub < 0.2, f"sub-pixel contour off by {sub:.3f}px"
+    assert stair > 5 * sub, f"staircase {stair:.3f} should be far worse than {sub:.3f}"

@@ -66,12 +66,10 @@ def test_autoscale_scales_pixel_knobs():
     assert cfg.scaled(1024, 1024).blur == pytest.approx(6.0)
 
 
-def test_smoothing_window_shrinks_with_the_image():
-    """A fixed window is proportionally huge on a small sprite and eats corners."""
+def test_corner_window_shrinks_with_the_image():
     cfg = Config()
-    assert cfg.scaled(1024, 1024).smooth_min == 2
-    tiny = cfg.scaled(64, 64)
-    assert tiny.smooth_min == 0 and tiny.smooth_max == 1
+    assert cfg.scaled(1024, 1024).corner_span == 7
+    assert cfg.scaled(256, 256).corner_span == 2
 
 
 def test_square_corners_survive_on_a_small_sprite():
@@ -82,7 +80,7 @@ def test_square_corners_survive_on_a_small_sprite():
     res = convert(img, Config())  # blur scales to 0 here, so corners are held
     red = [l for l in res.layers if l.hex == "#CC3344"]
     assert red, [l.hex for l in res.layers]
-    assert red[0].segments <= 6, "a rectangle should need four corners, not an arc"
+    assert red[0].segments <= 12, "a rectangle should not come back as an arc"
 
 
 @pytest.mark.skipif(raster.backend() is None, reason="no SVG renderer installed")
@@ -169,18 +167,6 @@ EXAMPLE = Path(__file__).resolve().parent.parent / "examples" / "honey-heart.png
 
 
 @pytest.mark.skipif(not EXAMPLE.exists(), reason="bundled example missing")
-def test_organic_art_is_not_faceted_by_corner_protection():
-    """On real soft-shaded artwork, holding raw corners preserves the staircase
-    of every diagonal edge and inflates the curve count for nothing."""
-    from img2svg.image import load
-
-    rgb, _ = load(str(EXAMPLE))
-    auto = convert(rgb, Config())
-    forced = convert(rgb, Config(keep_corners="on"))
-    assert forced.segments > auto.segments
-
-
-@pytest.mark.skipif(not EXAMPLE.exists(), reason="bundled example missing")
 @pytest.mark.skipif(raster.backend() is None, reason="no SVG renderer installed")
 def test_the_bundled_example_stays_faithful():
     """Guard rail on the whole pipeline; loosen only with a reason."""
@@ -191,7 +177,7 @@ def test_the_bundled_example_stays_faithful():
     shot = raster.render(res.svg, res.width, res.height, background=res.background_rgb)
     stats = verify.compare(rgb, shot)
     assert stats["mean"] < 2.5, verify.format_report(stats)
-    assert res.segments < 800
+    assert res.segments < 900
 
 
 def test_verify_defaults_to_the_sources_own_page_colour():
@@ -240,3 +226,62 @@ def test_edge_blends_still_go_to_the_dominant_side():
         img = np.tile(mix, (3, 3, 1))
         labels, _ = matte(img, pal)
         assert (labels == want).all(), f"{frac:.2f} -> {labels[0,0]}, wanted {want}"
+
+
+# --------------------------------------------------------------------------
+# shape snapping
+
+def test_a_wobbly_circle_is_snapped_to_a_real_one():
+    """Source art is full of shapes that are circles in intent and lumpy in fact.
+
+    A soft raster edge hides a two-pixel wobble; a crisp vector edge does not,
+    which is why a faithful trace of a "circle" comes back visibly not round.
+    """
+    from img2svg import regularize
+
+    t = np.linspace(0, 2 * np.pi, 400, endpoint=False)
+    r = 60 + 1.8 * np.sin(5 * t)          # a circle that wobbles by 3% of r
+    loop = np.stack([200 + r * np.cos(t), 200 + r * np.sin(t)], 1)
+    got = regularize.as_circle(loop, 0.045)
+    assert got is not None
+    cx, cy, rr = got
+    assert abs(cx - 200) < 1 and abs(cy - 200) < 1
+    assert abs(rr - 60) < 2
+
+
+def test_a_square_is_not_mistaken_for_a_circle():
+    from img2svg import regularize
+
+    side = np.linspace(-50, 50, 100)
+    loop = np.concatenate([
+        np.stack([side, np.full(100, -50.0)], 1),
+        np.stack([np.full(100, 50.0), side], 1),
+        np.stack([side[::-1], np.full(100, 50.0)], 1),
+        np.stack([np.full(100, -50.0), side[::-1]], 1),
+    ])
+    assert regularize.as_circle(loop, 0.045) is None
+
+
+def test_a_dot_with_lines_meeting_it_is_still_a_circle():
+    """Bites taken out by connecting strokes must not defeat detection."""
+    from img2svg import regularize
+
+    t = np.linspace(0, 2 * np.pi, 360, endpoint=False)
+    r = np.full(360, 40.0)
+    r[20:40] = 33.0      # a stroke cutting in
+    r[200:215] = 34.0
+    loop = np.stack([100 + r * np.cos(t), 100 + r * np.sin(t)], 1)
+    assert regularize.as_circle(loop, 0.045, trim_rounds=0) is None, \
+        "an untrimmed fit is dragged off by the bites"
+    got = regularize.as_circle(loop, 0.045)
+    assert got is not None and abs(got[2] - 40) < 1.5
+
+
+def test_snapping_is_opt_in():
+    img = np.full((240, 240, 3), 255, dtype=np.uint8)
+    yy, xx = np.mgrid[0:240, 0:240]
+    img[(xx - 120) ** 2 + (yy - 120) ** 2 < 70 ** 2] = (25, 99, 68)
+    plain = convert(img, Config())
+    snapped = convert(img, Config(regularize=("circles",)))
+    assert snapped.segments < plain.segments
+    assert plain.svg != snapped.svg

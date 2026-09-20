@@ -143,18 +143,64 @@ def _turn_weight(p: np.ndarray, span: int, corner_deg: float) -> np.ndarray:
     return np.clip((turn - corner_deg) / max(90.0 - corner_deg, 1.0), 0.0, 1.0)
 
 
-def inset(loop: Sequence[Point], dist: float) -> Loop:
-    """Shift every point toward the material, i.e. right of travel."""
+def inset(loop: Sequence[Point], dist: float, span: int = 3) -> Loop:
+    """Shift every point toward the material, i.e. right of travel.
+
+    The direction is taken over +/-``span`` points: on a pixel staircase the
+    immediate neighbours are axis-aligned, so a one-point tangent would push
+    every other point along a different axis and scallop the edge.
+    """
     if abs(dist) < 1e-9:
         return list(loop)
     p = np.asarray(loop, dtype=np.float64)
-    t = np.roll(p, -1, axis=0) - np.roll(p, 1, axis=0)
+    span = max(1, min(span, max(len(p) // 4, 1)))
+    t = np.roll(p, -span, axis=0) - np.roll(p, span, axis=0)
     norm = np.hypot(t[:, 0], t[:, 1])
     norm[norm < 1e-9] = 1.0
     tx, ty = t[:, 0] / norm, t[:, 1] / norm
     p[:, 0] += -ty * dist
     p[:, 1] += tx * dist
     return [tuple(v) for v in p]
+
+
+def detect_corners(loop: Sequence[Point], span: int, corner_deg: float) -> List[int]:
+    """Indices where the contour genuinely turns, judged at two scales.
+
+    A pixel staircase turns ninety degrees at every step, so a local measure
+    finds corners everywhere. A real corner is still turning when you step back
+    and look over twice the distance; a staircase step is not.
+    """
+    p = np.asarray(loop, dtype=np.float64)
+    n = len(p)
+    span = max(2, min(span, max(n // 6, 2)))
+    if n < 4 * span:
+        return []
+
+    def turn(k):
+        a = p - np.roll(p, k, axis=0)
+        b = np.roll(p, -k, axis=0) - p
+        ang = np.degrees(np.abs(np.arctan2(b[:, 1], b[:, 0])
+                                - np.arctan2(a[:, 1], a[:, 0]))) % 360.0
+        return np.minimum(ang, 360.0 - ang)
+
+    score = np.minimum(turn(span), turn(2 * span))
+    hot = np.flatnonzero(score > corner_deg)
+    if not len(hot):
+        return []
+
+    # one index per run of hot points: the sharpest
+    out: List[int] = []
+    run = [hot[0]]
+    for i in hot[1:]:
+        if i - run[-1] <= span:
+            run.append(i)
+        else:
+            out.append(int(max(run, key=lambda j: score[j])))
+            run = [i]
+    out.append(int(max(run, key=lambda j: score[j])))
+    if len(out) > 1 and (out[0] + n - out[-1]) <= span:
+        out.pop()
+    return out
 
 
 def rdp(loop: Sequence[Point], eps: float) -> Loop:
@@ -256,14 +302,27 @@ def path_d(start: Point, segs, prec: int = 1) -> str:
     return "".join(out)
 
 
-def loop_to_path(loop: Sequence[Point], *, smooth_k: int, eps: float,
-                 ins: float, corner_deg: float, prec: int,
-                 keep_corners: bool = False) -> Tuple[str, int]:
-    pts = smooth(loop, smooth_k, corner_deg if keep_corners else None)
+def loop_to_path(loop: Sequence[Point], *, tolerance: float, ins: float,
+                 corner_deg: float, corner_span: int, prec: int,
+                 presmooth: int = 0) -> Tuple[str, int]:
+    """Trace one closed loop into fitted cubics.
+
+    ``presmooth`` takes the edge off noise the source itself carries. On a
+    sub-pixel contour this is not the lossy step it is on a pixel staircase: the
+    contour is already within a tenth of a pixel of the true edge, so a short
+    average moves it barely at all while removing the ripple that would
+    otherwise cost the fitter a cubic every few points.
+    """
+    from . import fitting
+
+    pts = list(loop)
+    if presmooth:
+        pts = smooth(pts, presmooth)
     if ins:
-        pts = inset(pts, ins)
-    pts = rdp(pts, eps)
-    if len(pts) < 3:
+        pts = inset(pts, ins, span=max(2, corner_span))
+    corners = detect_corners(pts, corner_span, corner_deg)
+    start, segs = fitting.fit_closed(pts, tolerance, corners,
+                                     tangent_span=max(2, corner_span))
+    if not segs:
         return "", 0
-    start, segs = to_bezier(pts, corner_deg)
     return path_d(start, segs, prec), len(segs)

@@ -88,13 +88,18 @@ def test_smoothing_still_rounds_a_curve():
     assert jitter_out < jitter_in
 
 
-def test_keep_corners_follows_the_blur_setting():
-    from img2svg.config import Config
-    from img2svg.regions import keep_corners
+def test_corners_are_found_at_two_scales():
+    """A pixel staircase turns ninety degrees at every step; a corner keeps turning."""
+    import numpy as np
 
-    # soft art is smoothed, so protecting raw corners would facet the curves
-    assert keep_corners(Config(blur=6.0)) is False
-    # crisp labels, nothing to smooth away: hold the corners
-    assert keep_corners(Config(blur=0.0)) is True
-    assert keep_corners(Config(blur=6.0, keep_corners="on")) is True
-    assert keep_corners(Config(blur=0.0, keep_corners="off")) is False
+    # a right angle, approached along two staircase edges
+    a = [(float(i), 0.0) for i in range(40)]
+    b = [(39.0, float(i)) for i in range(1, 40)]
+    loop = a + b + [(float(i), 39.0) for i in range(38, -1, -1)] + \
+        [(0.0, float(i)) for i in range(38, 0, -1)]
+    found = curves.detect_corners(loop, 5, 50.0)
+    assert 3 <= len(found) <= 5, found
+
+    t = np.linspace(0, 2 * np.pi, 300, endpoint=False)
+    circle = [(50 + 30 * np.cos(x), 50 + 30 * np.sin(x)) for x in t]
+    assert curves.detect_corners(circle, 5, 50.0) == []

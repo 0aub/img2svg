@@ -78,7 +78,7 @@ source, the result, a ΔE heat map, and the worst 32 px blocks ranked. The regul
 
 ## How it works
 
-Seven stages. Three of them are the reason this exists.
+Eight stages. Four of them are the reason this exists.
 
 **1. Palette** — k-means, but only over *flat* pixels: ones whose 3×3
 neighbourhood is uniform. Edge pixels are blends of two real colours, and letting
@@ -120,14 +120,31 @@ high-curvature or genuinely ambiguous boundaries shift. Anything the vote would
 eat more than half of is restored wholesale, which is what keeps narrow
 highlights alive.
 
-**5. Curves** — exact boundary walk on the pixel-corner grid, smoothed with a
-window scaled to each contour's length, thinned with Ramer–Douglas–Peucker, then
-fitted with Catmull-Rom tangents that break at detected corners. The walk encloses
-exactly the pixels it traced, and averaged over sub-pixel phases that is already
-where the true edge is, so nothing is inset. (An earlier version pulled every
-contour half a pixel inward on a plausible-sounding argument about the walk
-sitting proud. Sweeping four inset values against six images put the optimum at
-zero, in every column.)
+**5. Contours, at sub-pixel precision.** Walking the pixel grid gives a staircase,
+and a staircase is not quantisation you can average away: along the flat top of a
+circle the boundary sits well inside the true edge and around the shoulders it
+sits outside, so the error is *correlated* over dozens of points. Smooth it as
+hard as you like and the radius still varies by half a pixel.
+
+Anti-aliasing already says where the edge is — a boundary pixel that is 70%
+covered puts it 70% of the way across. Contours are read as the 0.5 level set of
+that coverage with linear interpolation, which lands them within **0.03 px**
+instead of **0.62 px**: a twentyfold improvement, and the difference between a
+circle that is round and one that is merely close.
+
+**6. Fitting, not interpolating.** This is the difference between a traced curve
+and a drawn one. Simplifying a contour and running a spline *through* the
+surviving points locks in every wobble — the simplifier keeps the jitter peaks,
+because they are the extreme points, and the interpolant dutifully passes through
+all of them. The result measures well and looks like a blob, because a circle
+within half a pixel of round in a hundred independent places is visibly not
+round.
+
+Least-squares fitting (Schneider's algorithm) asks a different question: what
+single cubic comes closest to *all* these points at once. Noise symmetric about
+the true edge cancels instead of accumulating. Curves are split only where one
+cubic genuinely cannot reach, and the tangent at each join is measured from both
+sides at once so the pieces meet smoothly rather than kinking.
 
 Smoothing runs before corner detection, so a hard right angle is already two soft
 45° turns by the time anything looks for it and comes out as an arc. On hard-edged
@@ -137,12 +154,12 @@ of a smooth diagonal is a staircase, and protecting those steps facets the curve
 so it keys off the blur radius, which is already the answer to "does this artwork
 have soft edges".
 
-**6. Assembly** — the silhouette is drawn once as a base, and every detail layer
+**7. Assembly** — the silhouette is drawn once as a base, and every detail layer
 is clipped to it. That lets details be drawn a hair oversized so neighbours
 overlap instead of leaving hairline seams, while the outline of the artwork stays
 exactly where the base put it.
 
-**7. Verification** — render the SVG, convert both images to Lab, score CIEDE2000
+**8. Verification** — render the SVG, convert both images to Lab, score CIEDE2000
 per pixel, and rank 32 px blocks. RGB distance would call a two-pixel edge shift
 and a flat area being three units off the same size of mistake. They are not.
 
@@ -151,6 +168,24 @@ transparent source is flattened onto the same ground. Comparing a transparent
 trace to an opaque source over white measures the background you deliberately
 dropped: it reported ΔE 35 on a blue-page test image whose artwork was actually
 near perfect.
+
+## Shapes the source was reaching for
+
+Generated and hand-drawn artwork is full of shapes that are circles in *intent*
+and wobble by a couple of pixels in *fact*. A soft raster edge hides that; a
+crisp vector edge does not. Traced faithfully, a "circle" comes back visibly
+lumpy — and the fault is in the source, which is no comfort when it is your logo.
+
+`--regularize circles` fits a circle to each outline and, when one is within 4.5%
+of its radius of fitting, emits the exact circle instead. The fit is trimmed,
+because a dot in a diagram is rarely a bare dot: it has lines meeting it, and
+each one takes a bite out of the outline. Discarding the worst few per cent finds
+the circle the dot was drawn as — and snapping repairs the bite, which is what
+the source looks like anyway.
+
+On a six-fold node mark, a disc whose traced outline deviates 2.2 px from round
+becomes exact, and the file gets *smaller*: four cubics instead of dozens.
+`--regularize all` turns this on along with container snapping.
 
 ## Fidelity is not taste
 
@@ -162,7 +197,7 @@ the card is visibly wrong, almost certainly a generation artefact.
 `--regularize container` detects the disagreement, takes the majority (235),
 recovers the superellipse exponent from the corner profile (n = 1.77) and emits
 an exact shape. The mark is straightforwardly better. The score gets **worse**,
-1.18 → 1.98, because it now disagrees with the source in four places where the
+0.98 → 1.82, because it now disagrees with the source in four places where the
 source was wrong.
 
 Those fitted values are worth a second look: measured by hand from the source's
@@ -195,14 +230,13 @@ img2svg tune IMAGE [--budget N]  # search parameters (see the warning above)
 | `--verify` | print ΔE stats without writing a report |
 | `--mark` | also write the artwork with its container card removed |
 | `--mono` | also write a single-path `currentColor` silhouette |
-| `--regularize container` | snap a card-like background to an exact superellipse |
+| `--regularize LIST` | `container`, `circles`, or `all` — snap shapes to their ideal form |
 | `--container keep` | do not lift a dominant background out of `--mark`/`--mono` |
 | `--background auto\|none\|HEX` | which colour is the page behind the art |
 | `--colors N` | ceiling on palette size (default 16) |
 | `--min-sep D` | minimum RGB distance between palette entries (default 18) |
 | `--palette HEX,HEX,…` | use an exact palette and skip extraction |
 | `--blur R` | label smoothing radius; `0` disables (default 6) |
-| `--rdp E` | curve simplification tolerance in px (default 2.2) |
 | `--smooth-div N` | contour length ÷ N sets the smoothing window (default 45) |
 | `--min-area A` | discard regions under this many px (default 120) |
 | `--keep-corners auto\|on\|off` | hold corners back from smoothing (default auto) |

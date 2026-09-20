@@ -8,7 +8,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 from scipy import ndimage
 
-from . import emit, matte, palette, regions, regularize
+from . import coverage, emit, matte, palette, regions, regularize
 from .config import Config
 
 
@@ -116,8 +116,12 @@ def convert(rgb: np.ndarray, cfg: Config, opaque: Optional[np.ndarray] = None) -
             % (palette.rgb_to_hex(pal[container]), 100 * extent / float(w * h))
         )
 
+    # Sub-pixel geometry: the labelling is settled, this only measures how far
+    # across each boundary pixel the edge actually runs.
+    cov = coverage.neighbour_and_alpha(rgb, np.where(labels >= 0, labels, bg or 0), pal)
+
     svg, infos, base_d = _document(labels, keep, pal, counts, cfg, drop=(), notes=notes,
-                                   width=w, height=h, snap=True)
+                                   width=w, height=h, snap=True, cov=cov)
 
     mark = mono = None
     mark_mask = keep if container is None else (keep & (labels != container))
@@ -127,7 +131,7 @@ def convert(rgb: np.ndarray, cfg: Config, opaque: Optional[np.ndarray] = None) -
             mark_svg, _, mark_d = _document(
                 labels, mark_mask, pal, mark_counts, cfg,
                 drop=() if container is None else (container,),
-                notes=[], width=w, height=h, snap=False,
+                notes=[], width=w, height=h, snap=False, cov=cov,
             )
             if cfg.mark:
                 mark = mark_svg
@@ -148,13 +152,16 @@ def convert(rgb: np.ndarray, cfg: Config, opaque: Optional[np.ndarray] = None) -
                   container=container, labels=labels, notes=notes)
 
 
-def _document(labels, silhouette, pal, counts, cfg, drop, notes, width, height, snap):
+def _document(labels, silhouette, pal, counts, cfg, drop, notes, width, height, snap,
+              cov=None):
     """Build one SVG: a filled silhouette, then every other class clipped to it."""
     order = [c for c in sorted(counts, key=lambda c: -counts[c]) if c not in drop]
     stacked = cfg.layers == "stacked"
     if cfg.layers not in ("flat", "stacked"):
         raise ValueError("--layers takes 'flat' or 'stacked'")
-    base_d, base_segs = regions.region_path(silhouette, cfg, cfg.inset)
+    other, alpha = cov if cov else (None, None)
+    f = coverage.field_for(order, labels, other, alpha) if cov else None
+    base_d, base_segs, _ = regions.mask_path(silhouette, cfg, cfg.inset, f)
     if snap and "container" in cfg.regularize:
         snapped, note = regularize.container(silhouette, width, height, cfg)
         if snapped:
@@ -174,9 +181,11 @@ def _document(labels, silhouette, pal, counts, cfg, drop, notes, width, height, 
         if stacked:
             # cover this colour plus everything painted on top of it, so no
             # boundary in the document ever has a gap for the base to show
-            d, segs, nreg = regions.mask_path(np.isin(inner, order[i:]), cfg, cfg.inset)
+            f = coverage.field_for(order[i:], labels, other, alpha) if cov else None
+            d, segs, nreg = regions.mask_path(np.isin(inner, order[i:]), cfg, cfg.inset, f)
         else:
-            d, segs, nreg = regions.class_path(inner, c, cfg, cfg.inset - cfg.overlap)
+            f = coverage.field_for(c, labels, other, alpha) if cov else None
+            d, segs, nreg = regions.class_path(inner, c, cfg, cfg.inset - cfg.overlap, f)
         if not d:
             continue
         hx = palette.rgb_to_hex(pal[c])

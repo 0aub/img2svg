@@ -18,6 +18,91 @@ from .config import Config
 from .curves import fmt
 
 
+KAPPA = 0.5522847498307936
+"""Control-arm length, as a fraction of the radius, for a quarter circle."""
+
+
+def circle_path(cx: float, cy: float, r: float, prec: int = 1) -> str:
+    k = KAPPA * r
+    f = lambda v: fmt(v, prec)
+    return (
+        "M%s %sC%s %s %s %s %s %sC%s %s %s %s %s %sC%s %s %s %s %s %sC%s %s %s %s %s %sZ"
+        % (f(cx + r), f(cy),
+           f(cx + r), f(cy + k), f(cx + k), f(cy + r), f(cx), f(cy + r),
+           f(cx - k), f(cy + r), f(cx - r), f(cy + k), f(cx - r), f(cy),
+           f(cx - r), f(cy - k), f(cx - k), f(cy - r), f(cx), f(cy - r),
+           f(cx + k), f(cy - r), f(cx + r), f(cy - k), f(cx + r), f(cy))
+    )
+
+
+def fit_circle(pts: np.ndarray):
+    """Algebraic circle fit; returns (cx, cy, r, max_deviation)."""
+    p = np.asarray(pts, dtype=np.float64)
+    A = np.c_[2 * p[:, 0], 2 * p[:, 1], np.ones(len(p))]
+    b = (p ** 2).sum(1)
+    sol, *_ = np.linalg.lstsq(A, b, rcond=None)
+    cx, cy, c = sol
+    r2 = c + cx * cx + cy * cy
+    if r2 <= 0:
+        return None
+    r = math.sqrt(r2)
+    dev = np.abs(np.hypot(p[:, 0] - cx, p[:, 1] - cy) - r)
+    return float(cx), float(cy), float(r), float(dev.max())
+
+
+def as_circle(loop, tol_frac: float, min_r: float = 3.0,
+              keep: float = 0.85, trim_rounds: int = 3):
+    """Is this loop meant to be a circle? If so, give the exact one.
+
+    Generated and hand-drawn artwork is full of shapes that are circles in
+    intent and wobble by a couple of pixels in fact. A soft raster edge hides
+    that; a crisp vector edge does not, which is why a faithful trace of a
+    "circle" can come back visibly lumpy. Snapping costs fidelity to the source
+    and buys back the shape the source was reaching for.
+
+    The fit is trimmed, because a dot in a diagram is rarely a bare dot: it has
+    lines meeting it, and wherever one does, the region boundary takes a bite
+    out of the circle. Those bites are a small share of the outline and they are
+    all on one side, so a plain least-squares fit is dragged off by them and the
+    shape fails to be recognised at all. Discarding the worst few per cent and
+    refitting finds the circle the dot was drawn as - and snapping to it repairs
+    the bite, which is what the source looks like anyway.
+    """
+    p = np.asarray(loop, dtype=np.float64)
+    n = len(p)
+    if n < 16:
+        return None
+
+    idx = np.arange(n)
+    got = fit_circle(p)
+    for _ in range(trim_rounds):
+        if got is None:
+            return None
+        cx, cy, r, _ = got
+        dev = np.abs(np.hypot(p[idx, 0] - cx, p[idx, 1] - cy) - r)
+        cut = max(int(len(idx) * 0.95), 8)
+        idx = idx[np.argsort(dev)[:cut]]
+        if len(idx) < keep * n:
+            break
+        got = fit_circle(p[idx])
+    if got is None or len(idx) < keep * n:
+        return None
+
+    cx, cy, r, _ = got
+    if r < min_r:
+        return None
+    dev = np.abs(np.hypot(p[idx, 0] - cx, p[idx, 1] - cy) - r)
+    if dev.max() > tol_frac * r:
+        return None
+
+    # the inliers must go all the way round, not be an arc that happens to fit
+    ang = np.sort(np.arctan2(p[idx, 1] - cy, p[idx, 0] - cx))
+    gaps = np.diff(np.concatenate([ang, ang[:1] + 2 * math.pi]))
+    if gaps.max() > math.radians(50):
+        return None
+    return cx, cy, r
+
+
 def _corner_radii(mask: np.ndarray) -> Optional[Tuple[List[float], Tuple[int, int, int, int]]]:
     ys, xs = np.nonzero(mask)
     if len(xs) == 0:

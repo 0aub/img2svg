@@ -32,10 +32,10 @@ def _cfg_args(p: argparse.ArgumentParser) -> None:
     g = p.add_argument_group("shape")
     g.add_argument("--blur", type=float, default=d.blur, metavar="R",
                    help="label smoothing radius; 0 disables (default: %(default)s)")
-    g.add_argument("--rdp", type=float, default=d.rdp, metavar="E",
-                   help="curve simplification tolerance in px (default: %(default)s)")
-    g.add_argument("--smooth-div", type=float, default=d.smooth_div, metavar="N",
-                   help="contour length / N sets the smoothing window (default: %(default)s)")
+    g.add_argument("--tolerance", "--rdp", type=float, default=d.tolerance, metavar="PX",
+                   dest="tolerance",
+                   help="how far a fitted curve may sit from the traced edge "
+                        "(default: %(default)s)")
     g.add_argument("--min-area", type=float, default=d.min_area, metavar="A",
                    help="discard regions under this many px (default: %(default)s)")
     g.add_argument("--corner", type=float, default=d.corner_deg, metavar="DEG",
@@ -49,9 +49,6 @@ def _cfg_args(p: argparse.ArgumentParser) -> None:
     g.add_argument("--layers", default=d.layers, choices=("flat", "stacked"),
                    help="'stacked' cannot leak at all but roughly doubles the path "
                         "data on complex art (default: %(default)s)")
-    g.add_argument("--keep-corners", default=d.keep_corners, choices=("auto", "on", "off"),
-                   help="hold corners back from smoothing; auto means only when "
-                        "--blur is 0 (default: %(default)s)")
     g.add_argument("--no-autoscale", action="store_true",
                    help="treat the px defaults literally instead of scaling to image size")
 
@@ -59,7 +56,7 @@ def _cfg_args(p: argparse.ArgumentParser) -> None:
     g.add_argument("--background", default=d.background, metavar="AUTO|NONE|HEX",
                    help="which colour is the page behind the art (default: %(default)s)")
     g.add_argument("--regularize", default="", metavar="LIST",
-                   help="comma separated shape snapping; supports 'container'")
+                   help="comma separated shape snapping: container, circles, or all")
     g.add_argument("--precision", type=int, default=d.precision, metavar="N",
                    help="decimals kept in path data (default: %(default)s)")
     g.add_argument("--mono", action="store_true", help="also write a currentColor silhouette")
@@ -79,17 +76,15 @@ def _build_cfg(a: argparse.Namespace) -> Config:
         min_frac=a.min_frac,
         palette=[c.strip() for c in a.palette.split(",")] if a.palette else None,
         blur=a.blur,
-        rdp=a.rdp,
-        smooth_div=a.smooth_div,
+        tolerance=a.tolerance,
         min_area=a.min_area,
         corner_deg=a.corner,
-        keep_corners=a.keep_corners,
         inset=a.inset,
         overlap=a.overlap if a.overlap is not None else Config().overlap,
         auto_overlap=a.overlap is None,
         layers=a.layers,
         background=a.background,
-        regularize=tuple(x for x in a.regularize.split(",") if x),
+        regularize=_snapping(a.regularize),
         precision=a.precision,
         mono=a.mono,
         mark=a.mark,
@@ -98,6 +93,16 @@ def _build_cfg(a: argparse.Namespace) -> Config:
         desc=a.desc,
         autoscale=not a.no_autoscale,
     )
+
+
+def _snapping(spec: str):
+    want = tuple(x.strip() for x in spec.split(",") if x.strip())
+    if "all" in want:
+        return ("container", "circles")
+    for w in want:
+        if w not in ("container", "circles"):
+            raise SystemExit(f"img2svg: unknown --regularize option {w!r}")
+    return want
 
 
 def _out_path(inp: str, given: Optional[str], suffix: str = ".svg") -> str:
@@ -207,7 +212,8 @@ def cmd_tune(a) -> int:
     print(f"tuning on {a.input} (budget {a.budget})")
     best, trials = tune_run(rgb, cfg, opaque, budget=a.budget,
                             curve_weight=a.curve_weight, log=print, alpha=alpha)
-    print("\nbest: blur=%.1f rdp=%.1f smooth-div=%.0f" % (best.blur, best.rdp, best.smooth_div))
+    print("\nbest: blur=%.1f tolerance=%.2f overlap=%.2f"
+          % (best.blur, best.tolerance, best.overlap))
     res = convert(rgb, best, opaque)
     out = _out_path(a.input, a.output)
     image.save_text(out, res.svg)

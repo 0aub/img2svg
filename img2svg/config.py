@@ -48,30 +48,29 @@ class Config:
     """*scaled* Fill holes smaller than this instead of cutting them out."""
 
     # ---- curves -------------------------------------------------------
-    rdp: float = 2.2
-    """*scaled* Ramer-Douglas-Peucker tolerance, in pixels."""
-    smooth_div: float = 45.0
-    """Smoothing window = contour length / this."""
-    smooth_min: int = 2
-    """*scaled* Floor on the smoothing window."""
-    smooth_max: int = 8
-    """*scaled* Ceiling on the smoothing window.
+    tolerance: float = 0.6
+    """*scaled* How far a fitted curve may sit from the traced boundary, in px.
 
-    Was 22, which is a 45-point moving average. On artwork whose shapes have fine
-    concave detail - circles joined by thin rods - a window that wide drags the
-    junctions outward until the rods fatten and the gaps between them close up.
+    This is a *fitting* tolerance, not a simplification one. The curve is solved
+    by least squares against every boundary point at once, so noise symmetric
+    about the true edge cancels rather than being interpolated through. Under
+    about 1.2 the fit follows pixel jitter; much over 2 it starts cutting
+    corners off genuine detail.
     """
+    presmooth: int = 3
+    """*scaled* Half-width of a short average applied to the contour before fitting.
+
+    Strictly better than not doing it: swept 0 to 8 across four images it is the
+    only knob here that improves the score *and* more than halves the curve
+    count. On a sub-pixel contour it is nearly free - the contour already sits
+    within a tenth of a pixel of the true edge, so a short average barely moves
+    it, while removing the ripple that would otherwise cost a cubic every few
+    points.
+    """
+    corner_span: int = 7
+    """*scaled* How far either side to look when deciding if a point is a corner."""
     corner_deg: float = 50.0
     """Turns sharper than this keep a hard corner instead of a smooth tangent."""
-    keep_corners: str = "auto"
-    """Hold corners back from smoothing: 'auto' (only when blur is off), 'on', 'off'.
-
-    On hard-edged art - pixel sprites, UI, anything with real right angles - this
-    is what stops a square coming back as a squircle.  On organic artwork it is
-    actively harmful: the raw contour of a smooth diagonal is a staircase, and
-    protecting those steps facets the curve.  'auto' keys off the blur radius,
-    which is already the answer to "does this artwork have soft edges".
-    """
     inset: float = 0.0
     """*scaled* Pull every contour inward by this much.
 
@@ -108,7 +107,9 @@ class Config:
     precision: int = 1
     """Decimal places kept in path data."""
     regularize: Tuple[str, ...] = ()
-    """Shape snapping to apply. Currently supports 'container'."""
+    """Shape snapping to apply: 'container', 'circles', or 'all'."""
+    circle_tolerance: float = 0.045
+    """A loop within this fraction of its radius of being round becomes a circle."""
     mono: bool = False
     """Also write a single-path silhouette using currentColor."""
     mark: bool = False
@@ -121,8 +122,8 @@ class Config:
     autoscale: bool = True
 
     # ------------------------------------------------------------------
-    SCALED = ("blur", "min_area", "min_hole_area", "rdp", "inset",
-              "smooth_min", "smooth_max")
+    SCALED = ("blur", "min_area", "min_hole_area", "tolerance", "inset",
+              "overlap", "corner_span", "presmooth")
 
     def scaled(self, width: int, height: int) -> "Config":
         """Return a copy with *scaled* fields adjusted for this image size."""
@@ -132,10 +133,8 @@ class Config:
         out = dataclasses.replace(self)
         for name in self.SCALED:
             v = getattr(out, name) * (k * k if name in ("min_area", "min_hole_area") else k)
-            if name == "smooth_min":
-                v = max(0, int(v))
-            elif name == "smooth_max":
-                v = max(1, int(v))
+            if name in ("corner_span", "presmooth"):
+                v = max(0 if name == "presmooth" else 2, int(round(v)))
             setattr(out, name, v)
         return out
 

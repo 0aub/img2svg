@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 from scipy import ndimage
@@ -12,30 +12,13 @@ from scipy import ndimage
 from .config import Config
 from . import curves
 
-SMOOTH_OF_EXTENT = 0.06
-"""Smoothing window as a share of sqrt(area).
+CORNER_OF_EXTENT = 0.06
+"""How far to look for a corner, as a share of sqrt(area).
 
-Features do not grow with the canvas - a 1400px logo can be built from 40px
-dots - so a window sized from the image drags their junctions outward. Capping
-it by the shape's own size is worth about 0.1 dE on illustration and costs
-nothing; it is not, as first suspected, the difference between thin rods
-surviving and welding together, which they do either way.
+Features do not grow with the canvas - a 1400px logo can be built from 40px dots
+- so the window has to be sized from the shape, not the image.
 """
 
-# Capping the curve tolerance by shape size as well was tried and dropped: it
-# bought 0.03 dE and cost twice the curves. The faceting it was meant to fix
-# turned out to be ragged layer junctions, which is a different problem.
-
-
-def keep_corners(cfg: Config) -> bool:
-    """Should smoothing hold corners back? See Config.keep_corners."""
-    if cfg.keep_corners == "on":
-        return True
-    if cfg.keep_corners == "off":
-        return False
-    if cfg.keep_corners != "auto":
-        raise ValueError("--keep-corners takes auto, on or off")
-    return int(round(cfg.blur)) < 1
 
 
 @dataclass
@@ -78,6 +61,40 @@ def components(mask: np.ndarray, label: int, cfg: Config) -> List[Region]:
     return out
 
 
+def trace_field(field: np.ndarray, cfg: Config, ins: float) -> Tuple[str, int]:
+    """Isoline of a coverage field, fitted to cubics."""
+    from . import isoline
+
+    loops = isoline.contours(field, 0.5)
+    if not loops:
+        return "", 0
+    parts: List[str] = []
+    total = 0
+    for loop in loops:
+        a = abs(curves.polygon_area(loop))
+        if a < cfg.min_hole_area:
+            continue
+        extent = math.sqrt(a)
+        if "circles" in cfg.regularize:
+            from . import regularize
+
+            got = regularize.as_circle(loop, cfg.circle_tolerance)
+            if got is not None:
+                cx, cy, r = got
+                parts.append(regularize.circle_path(cx, cy, r - ins, cfg.precision))
+                total += 4
+                continue
+        span = int(max(2, min(cfg.corner_span, extent * CORNER_OF_EXTENT)))
+        d, n = curves.loop_to_path(
+            loop, tolerance=cfg.tolerance, ins=ins, corner_deg=cfg.corner_deg,
+            corner_span=span, prec=cfg.precision, presmooth=cfg.presmooth,
+        )
+        if d:
+            parts.append(d)
+            total += n
+    return "".join(parts), total
+
+
 def region_path(mask: np.ndarray, cfg: Config, ins: float) -> Tuple[str, int]:
     """Path data for one region: outer loops plus any holes big enough to keep.
 
@@ -95,13 +112,19 @@ def region_path(mask: np.ndarray, cfg: Config, ins: float) -> Tuple[str, int]:
         if a < cfg.min_hole_area:
             continue
         extent = math.sqrt(a)
-        k = int(max(cfg.smooth_min, min(cfg.smooth_max, round(len(loop) / cfg.smooth_div))))
-        k = int(min(k, max(1, extent * SMOOTH_OF_EXTENT)))
-        eps = cfg.rdp
+        if "circles" in cfg.regularize:
+            from . import regularize
+
+            got = regularize.as_circle(loop, cfg.circle_tolerance)
+            if got is not None:
+                cx, cy, r = got
+                parts.append(regularize.circle_path(cx, cy, r - ins, cfg.precision))
+                total += 4
+                continue
+        span = int(max(2, min(cfg.corner_span, extent * CORNER_OF_EXTENT)))
         d, n = curves.loop_to_path(
-            loop, smooth_k=k, eps=eps, ins=ins,
-            corner_deg=cfg.corner_deg, prec=cfg.precision,
-            keep_corners=keep_corners(cfg),
+            loop, tolerance=cfg.tolerance, ins=ins, corner_deg=cfg.corner_deg,
+            corner_span=span, prec=cfg.precision, presmooth=cfg.presmooth,
         )
         if d:
             parts.append(d)
@@ -109,21 +132,33 @@ def region_path(mask: np.ndarray, cfg: Config, ins: float) -> Tuple[str, int]:
     return "".join(parts), total
 
 
-def mask_path(mask: np.ndarray, cfg: Config, ins: float) -> Tuple[str, int, int]:
-    """Path data covering every surviving region of an arbitrary mask."""
+def mask_path(mask: np.ndarray, cfg: Config, ins: float,
+              field: Optional[np.ndarray] = None) -> Tuple[str, int, int]:
+    """Path data for every surviving region of a mask.
+
+    Region selection still happens on the crisp mask - that is a question about
+    which blobs are worth drawing - but the outlines come from the coverage
+    field, restricted to a dilated copy of each region so its neighbours cannot
+    pull the isoline around.
+    """
     regs = components(mask, -1, cfg)
     parts, total = [], 0
     for r in regs:
-        d, n = region_path(r.mask, cfg, ins)
+        if field is None:
+            d, n = region_path(r.mask, cfg, ins)
+        else:
+            near = ndimage.binary_dilation(r.mask, iterations=2)
+            d, n = trace_field(np.where(near, field, 0.0), cfg, ins)
         if d:
             parts.append(d)
             total += n
     return "".join(parts), total, len(regs)
 
 
-def class_path(labels: np.ndarray, cls: int, cfg: Config, ins: float) -> Tuple[str, int, int]:
+def class_path(labels: np.ndarray, cls: int, cfg: Config, ins: float,
+               field: Optional[np.ndarray] = None) -> Tuple[str, int, int]:
     """Path data covering every surviving region of one palette class."""
-    return mask_path(labels == cls, cfg, ins)
+    return mask_path(labels == cls, cfg, ins, field)
 
 
 def content_mask(labels: np.ndarray, bg) -> np.ndarray:
