@@ -86,9 +86,9 @@ def region_path(mask: np.ndarray, cfg: Config, ins: float) -> Tuple[str, int]:
     return "".join(parts), total
 
 
-def class_path(labels: np.ndarray, cls: int, cfg: Config, ins: float) -> Tuple[str, int, int]:
-    """Path data covering every surviving region of one palette class."""
-    regs = components(labels == cls, cls, cfg)
+def mask_path(mask: np.ndarray, cfg: Config, ins: float) -> Tuple[str, int, int]:
+    """Path data covering every surviving region of an arbitrary mask."""
+    regs = components(mask, -1, cfg)
     parts, total = [], 0
     for r in regs:
         d, n = region_path(r.mask, cfg, ins)
@@ -96,6 +96,11 @@ def class_path(labels: np.ndarray, cls: int, cfg: Config, ins: float) -> Tuple[s
             parts.append(d)
             total += n
     return "".join(parts), total, len(regs)
+
+
+def class_path(labels: np.ndarray, cls: int, cfg: Config, ins: float) -> Tuple[str, int, int]:
+    """Path data covering every surviving region of one palette class."""
+    return mask_path(labels == cls, cfg, ins)
 
 
 def content_mask(labels: np.ndarray, bg) -> np.ndarray:

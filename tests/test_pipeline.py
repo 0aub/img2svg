@@ -207,7 +207,7 @@ def test_a_flat_colour_is_never_re_routed_by_a_hairline_better_blend():
     """Two palette colours can usually be mixed to land a shade closer to a
     third. Letting that win hands interior pixels to a colour they look nothing
     like - it repainted a dipper handle #A05E1C where the source was #B97520."""
-    from img2svg.matte import matte, _solid_tolerance
+    from img2svg.matte import matte
 
     pal = np.array([[39, 20, 32], [230, 167, 37], [187, 121, 30], [160, 94, 28]],
                    dtype=np.int16)
@@ -217,15 +217,16 @@ def test_a_flat_colour_is_never_re_routed_by_a_hairline_better_blend():
     assert resid.max() < 5.0  # the distance to #BB791E itself
 
 
-def test_solid_tolerance_comes_from_the_palette_spacing():
-    from img2svg.matte import _solid_tolerance
+def test_pair_margin_scales_with_the_palette():
+    from img2svg.matte import pair_margin
 
-    # int16 on purpose: (255-0)**2 overflows it, and the old code returned NaN,
-    # which compares False against everything and disabled the check in silence
+    # int16 on purpose: (255-0)**2 overflows it, and an earlier version returned
+    # NaN, which compares False against everything and disabled itself in silence
     pal = np.array([[0, 0, 0], [100, 0, 0], [255, 0, 0]], dtype=np.int16)
-    assert _solid_tolerance(pal) == pytest.approx(50.0)
-    assert _solid_tolerance(pal.astype(np.float32)) == pytest.approx(50.0)
-    assert _solid_tolerance(pal[:1]) > 1e6
+    assert pair_margin(pal) == pytest.approx(15.0)
+    assert pair_margin(pal.astype(np.float32)) == pytest.approx(15.0)
+    assert pair_margin(np.array([[0, 0, 0], [4, 0, 0]], dtype=np.int16)) == 3.0
+    assert pair_margin(pal[:1]) > 1e6
 
 
 def test_edge_blends_still_go_to_the_dominant_side():

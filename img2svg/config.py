@@ -27,8 +27,13 @@ class Config:
     """Explicit palette as hex strings; skips extraction entirely."""
 
     # ---- segmentation -------------------------------------------------
-    blur: float = 6.0
-    """*scaled* Box radius used to smooth the label map. 0 disables smoothing."""
+    blur: float = 4.0
+    """*scaled* Box radius used to smooth the label map. 0 disables smoothing.
+
+    Chosen by sweeping seven values against three images and then looking: 2 and
+    4 tie on score, but at 2 a thin highlight inside a shadow still carries a
+    dark edge, so 4 is the smallest value that is also clean.
+    """
     blur_passes: int = 3
     """Box passes; 3 approximates a Gaussian."""
     protect_shrink: float = 0.55
@@ -62,8 +67,35 @@ class Config:
     protecting those steps facets the curve.  'auto' keys off the blur radius,
     which is already the answer to "does this artwork have soft edges".
     """
-    inset: float = 0.5
-    """*scaled* Pull contours inward; 0.5 undoes the half-pixel of the pixel grid."""
+    inset: float = 0.0
+    """*scaled* Pull every contour inward by this much.
+
+    The boundary walk encloses exactly the pixels it traced, and averaged over
+    sub-pixel phases that is already where the true edge is, so the default is
+    zero. Swept over four values on six images, zero won every column.
+    """
+    overlap: float = 0.5
+    """*scaled* Grow each detail layer outward so neighbours cannot leave a seam.
+
+    Two regions traced separately abut exactly, and two abutting anti-aliased
+    edges each contribute about half coverage, so whatever is underneath shows
+    through as a hairline. When that underneath is a dark card it reads as an
+    outline drawn around every shape.
+    """
+    auto_overlap: bool = True
+    """Drop the overlap to 0 when the source has no anti-aliasing.
+
+    Growing a shape half a pixel is invisible on a 1024px illustration and
+    obvious on a 16px sprite feature; art without anti-aliasing also has far
+    less seam to hide.
+    """
+    layers: str = "flat"
+    """'flat' draws each colour once; 'stacked' draws each over everything above it.
+
+    Stacked cannot leak at all, needs no overlap fudge, and is a touch more
+    accurate. It costs roughly twice the path data on complex illustration
+    because every layer carries the union of the ones above it.
+    """
 
     # ---- output -------------------------------------------------------
     background: str = "auto"

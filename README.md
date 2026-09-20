@@ -3,10 +3,13 @@
 Redraw flat and cel-shaded raster art as clean, **verified** SVG.
 
 Most tracers hand you a pile of paths and wish you luck. This one extracts the
-palette the artwork was actually drawn with, un-mixes the anti-aliasing so edges
-land where they belong, cleans up soft shading into honest flat shapes, and then
+palette the artwork was actually drawn with, finds the silhouette by un-mixing
+the page colour back out, cleans soft shading into honest flat shapes, and then
 **renders its own output back to pixels and scores it against the source** in
 CIEDE2000 so you know whether to trust it.
+
+Every design choice below was settled by measurement, and several of them
+overturned what the author expected.
 
 ```bash
 git clone https://github.com/0aub/img2svg && cd img2svg
@@ -68,13 +71,10 @@ honey-heart.png  ->  out/honey-heart.svg
   dE2000  mean 2.63   p95 7.69   max 99.69   7.4% of pixels over dE 2
 ```
 
-Four files come out: the full SVG, `.mark.svg` without the card, `.mono.svg` as a
+The outputs are the full SVG, `.mark.svg` without the card, `.mono.svg` as a
 single `currentColor` silhouette, and a self-contained HTML report with the
-source, the result, a ΔE heat map, and the worst 32 px blocks ranked.
-
-Without `--regularize container` the same image scores **mean ΔE 1.95**. The
-regularised version scores *worse* and looks *better*; see
-[Fidelity is not taste](#fidelity-is-not-taste).
+source, the result, a ΔE heat map, and the worst 32 px blocks ranked. The regularised version scores *worse* and looks
+*better*; see [Fidelity is not taste](#fidelity-is-not-taste).
 
 ## How it works
 
@@ -87,18 +87,29 @@ peaks are weighted over a 3×3×3 histogram neighbourhood, because a flat colour
 never lands in a single bin and a real colour can otherwise look too small to
 keep.
 
-**2. Matting** — the interesting one. A pixel on an edge is a mixture of the two
-regions it separates. Ask "which palette colour is this nearest to" and you often
-get a *third* colour: honey blended into dark plum passes straight through brown.
-That is where the muddy outline around every shape in a naive trace comes from.
-So instead we ask which **pair** of palette colours, mixed in what proportion,
-explains the pixel, and give it to whichever of the two owns more than half.
-Edges land on the true 50 % boundary and no third colour is invented.
+**2. Labelling** — nearest colour, which is duller than it sounds and took a
+detour to arrive at. An earlier version modelled every pixel as a mixture of two
+palette colours and handed it to whichever owned more than half, on the theory
+that nearest-colour lookup sends an edge pixel to whatever third colour sits
+between the two. Measured across seven images it was **worse everywhere**: twice
+the speckle, and it tore apart junctions where three regions meet, because a
+mixture can name a colour arbitrarily far from the pixel's own. Nearest colour
+cannot do that — its error is bounded by colour distance — and the blurred vote
+in stage 4 removes the thin fringes it does leave.
 
-**3. Background** — the page is the class at all four image corners, provided it
-really does wrap the frame. Voting on a border ring is the obvious approach and
-is wrong for the most common case: a full-bleed card with rounded corners owns
-most of every edge and outvotes the page around it.
+**3. Silhouette** — the one boundary where un-mixing does earn its keep. A
+half-and-half page/card pixel is nearest to whatever the palette is densest
+around, usually some mid-brown, so nearest colour grows the outline by a pixel.
+Inside the artwork that is a hairline nobody sees; here it is the shape of the
+whole mark, and it moved a fitted card corner by three pixels. So the page is
+un-mixed back out — but only for pixels that are both off-palette *and* next to
+the page. Colour alone cannot tell a mid grey from half a dark grey on white, and
+asking that question of an interior edge punches holes through solid artwork.
+
+The page itself is the class at all four image corners, provided it really does
+wrap the frame. Voting on a border ring is the obvious approach and is wrong for
+the most common case: a full-bleed card with rounded corners owns most of every
+edge and outvotes the page around it.
 
 **4. Segmentation** — real illustrations are not perfectly flat. Where the source
 fades one tone into another over twenty pixels, per-pixel labelling speckles and
@@ -111,10 +122,12 @@ highlights alive.
 
 **5. Curves** — exact boundary walk on the pixel-corner grid, smoothed with a
 window scaled to each contour's length, thinned with Ramer–Douglas–Peucker, then
-fitted with Catmull-Rom tangents that break at detected corners. Contours are
-pulled half a pixel inward: the walk traces the *outside* of the boundary pixels,
-but those pixels were chosen because their *centres* are inside, so every region
-otherwise comes out fat.
+fitted with Catmull-Rom tangents that break at detected corners. The walk encloses
+exactly the pixels it traced, and averaged over sub-pixel phases that is already
+where the true edge is, so nothing is inset. (An earlier version pulled every
+contour half a pixel inward on a plausible-sounding argument about the walk
+sitting proud. Sweeping four inset values against six images put the optimum at
+zero, in every column.)
 
 Smoothing runs before corner detection, so a hard right angle is already two soft
 45° turns by the time anything looks for it and comes out as an arc. On hard-edged
@@ -144,13 +157,17 @@ near perfect.
 `img2svg tune` will search parameters for you and minimise mean ΔE. Read this
 before you trust it.
 
-The honey-heart icon has corner radii of 236, 236, 188 and 188 — the bottom of
+The honey-heart icon has corner radii of 235, 234, 187 and 188 — the bottom of
 the card is visibly wrong, almost certainly a generation artefact.
-`--regularize container` detects the disagreement, takes the majority (236),
-recovers the superellipse exponent from the corner profile (n = 1.79) and emits
+`--regularize container` detects the disagreement, takes the majority (235),
+recovers the superellipse exponent from the corner profile (n = 1.77) and emits
 an exact shape. The mark is straightforwardly better. The score gets **worse**,
-1.95 → 2.63, because it now disagrees with the source in four places where the
+1.18 → 1.98, because it now disagrees with the source in four places where the
 source was wrong.
+
+Those fitted values are worth a second look: measured by hand from the source's
+sub-pixel alpha, the corner radius is 235.8 and the exponent 1.79. The pipeline
+recovers 235 and 1.77 with no knowledge of either.
 
 The same tension shows up in shading. The heart's right rim is a genuine
 gradient. Flattening it into one clean hard edge can score worse than a ragged
@@ -189,6 +206,9 @@ img2svg tune IMAGE [--budget N]  # search parameters (see the warning above)
 | `--smooth-div N` | contour length ÷ N sets the smoothing window (default 45) |
 | `--min-area A` | discard regions under this many px (default 120) |
 | `--keep-corners auto\|on\|off` | hold corners back from smoothing (default auto) |
+| `--layers flat\|stacked` | stacked cannot leak but roughly doubles path data |
+| `--overlap PX` | grow detail layers to hide seams (default 0.5, auto 0 on hard edges) |
+| `--inset PX` | pull every contour inward (default 0) |
 | `--precision N` | decimals kept in path data (default 1) |
 | `--json` | machine-readable summary on stdout |
 
@@ -242,6 +262,9 @@ print(verify.format_report(verify.compare(rgb, shot)))
   most of the frame can be mistaken for a card. It only affects `--mark`/`--mono`,
   the conversion says what it did, and `--container keep` switches it off.
 - Memory is roughly 8 bytes per pixel per palette entry during segmentation.
+- Where three regions meet at a narrow tip, the boundary between two of them can
+  step by a pixel or two instead of running smoothly into the point. Raising
+  `--blur` reduces it.
 
 ## Development
 

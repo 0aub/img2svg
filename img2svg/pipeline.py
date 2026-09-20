@@ -73,13 +73,25 @@ def convert(rgb: np.ndarray, cfg: Config, opaque: Optional[np.ndarray] = None) -
     pal = palette.extract(rgb, cfg)
     labels, _resid = matte.matte(rgb, pal)
 
+    if cfg.auto_overlap and cfg.overlap:
+        aa = matte.blend_fraction(rgb, pal)
+        if aa < 0.01:
+            cfg = cfg.replace(overlap=0.0)
+            notes.append(
+                "source has no anti-aliasing (%.2f%% blended pixels), so layers "
+                "are not grown to hide seams" % (100 * aa)
+            )
+
     if opaque is not None:
         bg = None
         content = opaque
         notes.append("alpha channel used as the silhouette")
     else:
         bg = matte.resolve_background(pal, labels, cfg.background)
-        content = regions.content_mask(labels, bg)
+        content = (regions.content_mask(labels, bg) if bg is None
+                   else matte.silhouette(rgb, pal, bg))
+        if bg is not None:
+            labels = np.where(content, labels, bg)
 
     radius = int(round(cfg.blur))
     if radius >= 1:
@@ -139,6 +151,9 @@ def convert(rgb: np.ndarray, cfg: Config, opaque: Optional[np.ndarray] = None) -
 def _document(labels, silhouette, pal, counts, cfg, drop, notes, width, height, snap):
     """Build one SVG: a filled silhouette, then every other class clipped to it."""
     order = [c for c in sorted(counts, key=lambda c: -counts[c]) if c not in drop]
+    stacked = cfg.layers == "stacked"
+    if cfg.layers not in ("flat", "stacked"):
+        raise ValueError("--layers takes 'flat' or 'stacked'")
     base_d, base_segs = regions.region_path(silhouette, cfg, cfg.inset)
     if snap and "container" in cfg.regularize:
         snapped, note = regularize.container(silhouette, width, height, cfg)
@@ -154,8 +169,14 @@ def _document(labels, silhouette, pal, counts, cfg, drop, notes, width, height, 
     else:
         base_hex = None
 
-    for c in order[1:]:
-        d, segs, nreg = regions.class_path(np.where(silhouette, labels, -1), c, cfg, 0.0)
+    inner = np.where(silhouette, labels, -1)
+    for i, c in enumerate(order[1:], start=1):
+        if stacked:
+            # cover this colour plus everything painted on top of it, so no
+            # boundary in the document ever has a gap for the base to show
+            d, segs, nreg = regions.mask_path(np.isin(inner, order[i:]), cfg, cfg.inset)
+        else:
+            d, segs, nreg = regions.class_path(inner, c, cfg, cfg.inset - cfg.overlap)
         if not d:
             continue
         hx = palette.rgb_to_hex(pal[c])

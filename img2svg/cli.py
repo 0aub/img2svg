@@ -40,6 +40,15 @@ def _cfg_args(p: argparse.ArgumentParser) -> None:
                    help="discard regions under this many px (default: %(default)s)")
     g.add_argument("--corner", type=float, default=d.corner_deg, metavar="DEG",
                    help="turns sharper than this stay corners (default: %(default)s)")
+    g.add_argument("--inset", type=float, default=d.inset, metavar="PX",
+                   help="pull every contour inward by this many px (default: %(default)s)")
+    g.add_argument("--overlap", type=float, default=None, metavar="PX",
+                   help="grow detail layers outward to hide seams; omit to decide "
+                        "from whether the source is anti-aliased (default %.1f when it is)"
+                        % d.overlap)
+    g.add_argument("--layers", default=d.layers, choices=("flat", "stacked"),
+                   help="'stacked' cannot leak at all but roughly doubles the path "
+                        "data on complex art (default: %(default)s)")
     g.add_argument("--keep-corners", default=d.keep_corners, choices=("auto", "on", "off"),
                    help="hold corners back from smoothing; auto means only when "
                         "--blur is 0 (default: %(default)s)")
@@ -75,6 +84,10 @@ def _build_cfg(a: argparse.Namespace) -> Config:
         min_area=a.min_area,
         corner_deg=a.corner,
         keep_corners=a.keep_corners,
+        inset=a.inset,
+        overlap=a.overlap if a.overlap is not None else Config().overlap,
+        auto_overlap=a.overlap is None,
+        layers=a.layers,
         background=a.background,
         regularize=tuple(x for x in a.regularize.split(",") if x),
         precision=a.precision,
