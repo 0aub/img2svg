@@ -87,6 +87,15 @@ peaks are weighted over a 3×3×3 histogram neighbourhood, because a flat colour
 never lands in a single bin and a real colour can otherwise look too small to
 keep.
 
+That sampling has one blind spot, and it is fatal on line art: a three-pixel
+stroke has essentially no interior, so its colour never appears among the flat
+pixels at all. One test image had 24,000 stroke pixels of which 18 were flat —
+the palette came back as the page colour alone and the trace was empty. So
+afterwards the palette is asked what it still cannot account for, judged against
+every colour *and every blend of two* so that ordinary anti-aliasing does not
+look like a gap. A palette that is genuinely short leaves ~10 % of the image
+unexplained; a complete one leaves under 0.2 %.
+
 **2. Labelling** — nearest colour, which is duller than it sounds and took a
 detour to arrive at. An earlier version modelled every pixel as a mixture of two
 palette colours and handed it to whichever owned more than half, on the theory

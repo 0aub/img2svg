@@ -21,6 +21,19 @@ class Config:
     """Minimum RGB distance between two palette entries."""
     min_frac: float = 0.0015
     """Drop a palette entry holding less than this share of the flat pixels."""
+    missing_share: float = 0.01
+    """Share of the image that must be unexplained before a colour is added back.
+
+    Clustering only flat pixels keeps anti-aliasing out of the palette, but it
+    cannot see a colour that owns no flat pixels at all - a three-pixel stroke
+    has essentially no interior. Measured over six images the separation is
+    wide: a palette that is genuinely missing a colour leaves 9.6% of the image
+    unexplained, and a complete one leaves at most 0.12%. Anywhere in between
+    works; 1% sits in the middle of a tenfold gap on both sides.
+    """
+    missing_tol: float = 40.0
+    """How far off a pixel must be, from every colour *and every blend of two*,
+    to count as unexplained."""
     purity_tol: int = 10
     """A pixel is 'flat' when its 3x3 neighbourhood varies by no more than this."""
     palette: Optional[Sequence[str]] = None

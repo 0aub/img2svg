@@ -103,6 +103,61 @@ def _lloyd(samples: np.ndarray, seeds: np.ndarray, iters: int = 16) -> np.ndarra
     return cen
 
 
+def _unexplained(px: np.ndarray, cen: np.ndarray) -> np.ndarray:
+    """Distance from each pixel to the nearest palette colour *or blend of two*.
+
+    The second half matters: an anti-aliased edge pixel is a mixture of two
+    colours that are already in the palette, so it is fully explained even
+    though it matches neither. Without that, every edge in the image looks like
+    a colour we missed.
+    """
+    P = cen.astype(np.float32)
+    best = np.full(len(px), np.inf, dtype=np.float32)
+    for c in P:
+        np.minimum(best, ((px - c) ** 2).sum(1), out=best)
+    for i in range(len(P)):
+        for j in range(i + 1, len(P)):
+            d = P[i] - P[j]
+            l2 = float(d @ d)
+            if l2 < 1e-6:
+                continue
+            a = np.clip(((px - P[j]) @ d) / l2, 0.0, 1.0)
+            np.minimum(best, ((px - (P[j] + a[:, None] * d)) ** 2).sum(1), out=best)
+    return np.sqrt(best)
+
+
+def _add_missing(img: np.ndarray, cen: np.ndarray, cfg: Config) -> np.ndarray:
+    """Recover colours that own no flat pixels at all.
+
+    Clustering only flat pixels is what keeps anti-aliasing out of the palette,
+    but it has a blind spot: a three-pixel stroke has essentially no interior,
+    so its colour never appears in the sample. On line art that means the
+    palette comes back as the background alone and the trace is empty - 24,000
+    stroke pixels in one test image, 18 of them flat.
+
+    So afterwards, ask what the palette still cannot account for, and if a real
+    share of the image is unexplained, take its dominant colour and try again.
+    """
+    flat = img.reshape(-1, 3).astype(np.float32)
+    if len(flat) > 200_000:
+        idx = np.random.default_rng(1).choice(len(flat), 200_000, replace=False)
+        flat = flat[idx]
+
+    while len(cen) < cfg.max_colors:
+        dist = _unexplained(flat, cen)
+        bad = dist > cfg.missing_tol
+        if bad.mean() < cfg.missing_share:
+            break
+        seeds = _seed(flat[bad].astype(np.int16), cfg)
+        if not len(seeds):
+            break
+        new = seeds[0]
+        if min(float(np.linalg.norm(new - c)) for c in cen) < cfg.min_sep:
+            break
+        cen = np.vstack([cen, new[None, :]])
+    return cen
+
+
 def extract(img: np.ndarray, cfg: Config) -> np.ndarray:
     """Return the palette as an (K, 3) int16 array, most common colour first."""
     if cfg.palette:
@@ -127,6 +182,8 @@ def extract(img: np.ndarray, cfg: Config) -> np.ndarray:
         if keep.all() or keep.sum() == 0:
             break
         cen = _lloyd(samples, cen[keep])
+
+    cen = _add_missing(img, cen, cfg)
 
     d = ((samples[:, None, :].astype(np.float32) - cen[None]) ** 2).sum(-1)
     counts = np.bincount(d.argmin(1), minlength=len(cen))
