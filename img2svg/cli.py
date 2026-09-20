@@ -99,6 +99,7 @@ def cmd_convert(a) -> int:
     res = convert(rgb, cfg, opaque)
 
     out = _out_path(a.input, a.output)
+    stem = os.path.splitext(out)[0]
     image.save_text(out, res.svg)
     say = (lambda *x: None) if a.quiet else print
 
@@ -113,7 +114,6 @@ def cmd_convert(a) -> int:
         print(f"img2svg: {a.input} produced an empty SVG - nothing flat enough to trace",
               file=sys.stderr)
         return 3
-    stem = os.path.splitext(out)[0]
     for text, suffix in ((res.mark, ".mark.svg"), (res.mono, ".mono.svg")):
         if text:
             image.save_text(stem + suffix, text)
@@ -136,7 +136,8 @@ def cmd_convert(a) -> int:
             print(f"  scored against {res.background_hex} (the detected page colour)")
         print(verify.format_report(stats))
         if a.report:
-            rp = a.report if isinstance(a.report, str) else _out_path(a.input, None, ".report.html")
+            # sits beside the SVG, not the input, so -o keeps everything together
+            rp = a.report if isinstance(a.report, str) else stem + ".report.html"
             image.save_text(rp, report.build(src, res.svg, stats, res, cfg))
             say(f"  report -> {rp}")
     if a.json:

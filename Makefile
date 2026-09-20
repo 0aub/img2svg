@@ -14,7 +14,7 @@ shell: build
 
 example: build
 	docker run --rm -u $$(id -u):$$(id -g) -v "$(PWD)/examples:/work" $(IMAGE) \
-	  honey-heart.png -o out/honey-heart.svg --regularize container --mono --report
+	  honey-heart.png -o out/honey-heart.svg --regularize container --mono --mark --report
 
 clean:
 	rm -rf examples/out .pytest_cache **/__pycache__
