@@ -43,3 +43,7 @@ def composite(rgb: RGB, alpha: Optional[np.ndarray], background) -> RGB:
 def save_text(path: str, text: str) -> None:
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(text)
+
+
+def save_png(path: str, arr: np.ndarray) -> None:
+    Image.fromarray(arr).save(path, format="PNG", optimize=True)

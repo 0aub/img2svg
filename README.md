@@ -63,18 +63,44 @@ make example
 
 ```
 honey-heart.png  ->  out/honey-heart.svg
-  1024 x 1024  ~  8 colours, 54 regions, 734 curves, 26.7 KB
+  1024 x 1024  ~  8 colours, 75 regions, 1309 curves, 46.4 KB
   note: treated #271420 as a container: it fills 96% of the frame, so --mark
         and --mono leave it out. Use --container keep to draw it as a normal layer.
-  note: container snapped to a superellipse: r=236, n=1.79
-        (measured corner radii 236, 236, 188, 188, spread 21%)
-  dE2000  mean 2.63   p95 7.69   max 99.69   7.4% of pixels over dE 2
+  note: container snapped to a superellipse: r=235, n=1.77
+        (measured corner radii 235, 234, 187, 188, spread 20%)
+  dE2000  mean 1.63   p95 2.23   max 99.69   5.6% of pixels over dE 2
 ```
 
 The outputs are the full SVG, `.mark.svg` without the card, `.mono.svg` as a
 single `currentColor` silhouette, and a self-contained HTML report with the
-source, the result, a ΔE heat map, and the worst 32 px blocks ranked. The regularised version scores *worse* and looks
-*better*; see [Fidelity is not taste](#fidelity-is-not-taste).
+source, the result, a ΔE heat map, and the worst 32 px blocks ranked. That
+example passes `--regularize container`, which scores *worse* (plain defaults
+reach 0.79) and looks *better*; see [Fidelity is not taste](#fidelity-is-not-taste).
+
+## Many at once
+
+```bash
+./img2svg.sh batch logos/ -o out
+```
+
+One folder per input, so a stem's files stay together instead of forming four
+interleaved heaps in one directory:
+
+```
+out/
+  index.html          every result, worst ΔE first, with source | traced | difference
+  results.csv         the same numbers, for a spreadsheet or a diff
+  <stem>/
+    <stem>.svg
+    <stem>.mono.svg       with --mono
+    <stem>.mark.svg       with --mark
+    <stem>.report.html    with --report
+    compare.png           source | traced | difference
+```
+
+The index is sorted worst-first on purpose: a batch of forty is read by looking
+at the three that went wrong, and a name-ordered gallery buries those in the
+middle. A file that fails to convert is recorded and the batch continues.
 
 ## How it works
 
@@ -211,8 +237,12 @@ the card is visibly wrong, almost certainly a generation artefact.
 `--regularize container` detects the disagreement, takes the majority (235),
 recovers the superellipse exponent from the corner profile (n = 1.77) and emits
 an exact shape. The mark is straightforwardly better. The score gets **worse**,
-0.98 → 1.82, because it now disagrees with the source in four places where the
+0.79 → 1.63, because it now disagrees with the source in four places where the
 source was wrong.
+
+So `--regularize` is a taste flag, not a quality flag, and it is off by default.
+Reach for it when you want the shape the artwork was aiming at; leave it alone
+when you want the shape the artwork has.
 
 Those fitted values are worth a second look: measured by hand from the source's
 sub-pixel alpha, the corner radius is 235.8 and the exponent 1.79. The pipeline
@@ -230,6 +260,7 @@ Use the number to catch regressions between runs. Do not let it pick the design.
 ```
 img2svg IMAGE [options]          # same as: img2svg convert IMAGE
 img2svg convert IMAGE [options]
+img2svg batch DIR|IMAGE... -o OUT  # trace many, into one organised tree
 img2svg palette IMAGE            # show the extracted palette and coverage
 img2svg verify IMAGE SVG         # score an existing SVG against a raster
                                  #   --against auto|HEX picks the page colour
@@ -250,17 +281,22 @@ img2svg tune IMAGE [--budget N]  # search parameters (see the warning above)
 | `--colors N` | ceiling on palette size (default 16) |
 | `--min-sep D` | minimum RGB distance between palette entries (default 18) |
 | `--palette HEX,HEX,…` | use an exact palette and skip extraction |
-| `--blur R` | label smoothing radius; `0` disables (default 6) |
-| `--smooth-div N` | contour length ÷ N sets the smoothing window (default 45) |
+| `--blur R` | label smoothing radius; `0` disables (default 4) |
+| `--tolerance PX` | how far a fitted curve may sit from the traced edge (default 0.6) |
+| `--corner DEG` | turns sharper than this stay corners instead of rounding (default 50) |
 | `--min-area A` | discard regions under this many px (default 120) |
-| `--keep-corners auto\|on\|off` | hold corners back from smoothing (default auto) |
 | `--layers flat\|stacked` | stacked cannot leak but roughly doubles path data |
 | `--overlap PX` | grow detail layers to hide seams (default 0.5, auto 0 on hard edges) |
 | `--inset PX` | pull every contour inward (default 0) |
 | `--precision N` | decimals kept in path data (default 1) |
 | `--json` | machine-readable summary on stdout |
 
-Exit codes: `0` success, `2` input not found, `3` nothing flat enough to trace.
+`batch` adds `-o DIR` (the tree root), `--report` (one HTML page per input) and
+`--no-compare` (skip the per-input `compare.png`). Every `convert` option above
+applies to the whole batch.
+
+Exit codes: `0` success, `2` input not found, `3` nothing flat enough to trace
+(for `batch`, that at least one input failed or came out empty).
 
 Pixel-valued defaults are quoted for a 1024 px image and scale with the input, so
 they behave the same on a 256 px sprite and a 4096 px poster. `--no-autoscale`

@@ -14,7 +14,7 @@ from . import __version__, image, palette, raster, report, verify
 from .config import Config
 from .pipeline import convert
 
-COMMANDS = ("convert", "palette", "verify", "tune", "version")
+COMMANDS = ("convert", "batch", "palette", "verify", "tune", "version")
 
 
 def _cfg_args(p: argparse.ArgumentParser) -> None:
@@ -204,6 +204,47 @@ def _page_colour(rgb: np.ndarray):
     return (255, 255, 255) if bg is None else tuple(int(v) for v in pal[bg])
 
 
+
+def cmd_batch(a) -> int:
+    from .batch import run as batch_run
+
+    inputs = _expand(a.inputs)
+    if not inputs:
+        print("img2svg: no images found", file=sys.stderr)
+        return 2
+    say = (lambda *x: None) if a.quiet else print
+    say(f"{len(inputs)} images -> {a.output}/")
+    rows = batch_run(inputs, a.output, _build_cfg(a), want_report=a.report,
+                     compare=not a.no_compare, log=say)
+    scored = [r["mean"] for r in rows if "mean" in r]
+    bad = [r for r in rows if r["status"] != "ok"]
+    if scored:
+        print("dE mean %.2f   median %.2f   worst %.2f   over dE 2: %d of %d"
+              % (sum(scored) / len(scored), sorted(scored)[len(scored) // 2],
+                 max(scored), sum(v > 2.0 for v in scored), len(scored)))
+    print(f"index -> {os.path.join(a.output, 'index.html')}")
+    if bad:
+        print("%d failed or came out empty: %s"
+              % (len(bad), ", ".join(r["name"] for r in bad)), file=sys.stderr)
+        return 3
+    return 0
+
+
+_IMAGE_EXT = (".png", ".webp", ".jpg", ".jpeg", ".gif", ".bmp", ".tif", ".tiff")
+
+
+def _expand(paths: List[str]) -> List[str]:
+    """Accept files, folders, or both; folders contribute their images, sorted."""
+    out: List[str] = []
+    for p in paths:
+        if os.path.isdir(p):
+            out += sorted(os.path.join(p, f) for f in os.listdir(p)
+                          if f.lower().endswith(_IMAGE_EXT))
+        else:
+            out.append(p)
+    return out
+
+
 def cmd_tune(a) -> int:
     from .tune import run as tune_run
 
@@ -242,6 +283,19 @@ def build_parser() -> argparse.ArgumentParser:
                    help="suppress the summary; --verify output still prints")
     _cfg_args(c)
     c.set_defaults(func=cmd_convert)
+
+    c = sub.add_parser("batch", help="trace many images into one organised tree")
+    c.add_argument("inputs", nargs="+", metavar="IMAGE_OR_DIR")
+    c.add_argument("-o", "--output", default="out", metavar="DIR",
+                   help="tree root; one folder per input (default: %(default)s)")
+    c.add_argument("--report", action="store_true",
+                   help="also write each input's HTML comparison")
+    c.add_argument("--no-compare", action="store_true",
+                   help="skip the per-input compare.png")
+    c.add_argument("-q", "--quiet", action="store_true",
+                   help="suppress per-image lines; the summary still prints")
+    _cfg_args(c)
+    c.set_defaults(func=cmd_batch)
 
     c = sub.add_parser("palette", help="show the extracted palette")
     c.add_argument("input")
