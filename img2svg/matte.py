@@ -58,6 +58,105 @@ def matte(img: np.ndarray, pal: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     return labels.reshape(h, w), resid.reshape(h, w)
 
 
+#: How much better the two-colour model must fit before a pixel is re-labelled,
+#: as a share of :func:`pair_margin`. The mixture has a free parameter the plain
+#: colour does not, so it fits better almost everywhere; without a margin this
+#: reassigns half the image.
+UNMIX_MARGIN = 0.6
+
+#: How far to look for the colours a pixel might be a mixture *of*. Only colours
+#: that are actually nearby are considered: a global search over every pair is
+#: what made an earlier attempt paint the honey dipper's handle as a blend of
+#: two colours that were nowhere near it.
+UNMIX_REACH = 2
+
+
+def unmix(img: np.ndarray, labels: np.ndarray, resid: np.ndarray,
+          pal: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """Decide, per pixel, between "this is colour C" and "this is A mixed with B".
+
+    Nearest-colour labelling has no idea what a blend is. Where a dark facet
+    meets the white page, the anti-aliased pixels between them run along the
+    line joining those two colours - and if the palette holds a mid tone,
+    because some other part of the artwork really is that colour, the whole
+    transition gets labelled with it. The result is a one or two pixel fringe of
+    a colour that is not there, along every edge of that kind, its outer
+    boundary torn because which pixel lands where is decided by noise a couple
+    of units wide. That fringe is what reads as spray.
+
+    The fix is not to filter it afterwards. A fringe is not thin enough to catch
+    by thickness - it joins a real region of the same colour - and voting it
+    away takes the genuinely thin features with it, a globe's grid lines and a
+    frame's shaded side. It has to be decided at labelling, on the evidence:
+
+      * a fringe pixel lies almost exactly on the segment joining the two
+        colours either side of it, and only approximately on the mid tone;
+      * a real thin stroke lies on its own colour and on no such segment.
+
+    So a pixel is re-labelled only when a mixture of two colours *present in its
+    neighbourhood* beats its own colour by a clear margin - and it goes to
+    whichever end of the mixture it is nearer, so a stroke keeps its middle.
+
+    Returns ``(labels, mixed)``, where ``mixed`` marks the pixels re-labelled.
+    """
+    h, w = labels.shape
+    k = len(pal)
+    P = pal.astype(np.float32)
+    margin = pair_margin(pal)
+    confident = resid <= margin
+    size = 2 * UNMIX_REACH + 1
+    near = np.empty((k, h, w), dtype=bool)
+    backed = np.zeros((k, h, w), dtype=bool)
+    for c in range(k):
+        mine = labels == c
+        near[c] = ndimage.uniform_filter(mine.astype(np.float32),
+                                         size=size, mode="nearest") > 0
+        backed[c] = ndimage.uniform_filter((mine & confident).astype(np.float32),
+                                           size=size, mode="nearest") > 0
+    # Only pixels their own colour fails to explain, and only where that colour
+    # has no unambiguous pixels nearby to vouch for it. A drawn stroke two
+    # pixels wide still has some: its middle sits on its own colour. A fringe
+    # has none anywhere along it, because it exists only in the transition.
+    own_backed = np.take_along_axis(backed, labels[None].astype(np.intp), axis=0)[0]
+    cand = ~confident & ~own_backed
+    mixed = np.zeros_like(cand)
+    if k < 3 or not cand.any():
+        return labels, mixed
+
+    idx = np.flatnonzero(cand.ravel())
+    px = img.reshape(-1, 3).astype(np.float32)[idx]
+    best = resid.ravel()[idx].astype(np.float32) - UNMIX_MARGIN * margin
+    out = labels.ravel()[idx].copy()
+    hit = np.zeros(len(idx), dtype=bool)
+    flat_near = near.reshape(k, -1)[:, idx]
+
+    for i in range(k):
+        for j in range(i + 1, k):
+            sel = flat_near[i] & flat_near[j]
+            if not sel.any():
+                continue
+            d = P[j] - P[i]
+            l2 = float(d @ d)
+            if l2 < 1e-6:
+                continue
+            q = px[sel]
+            a = np.clip(((q - P[i]) @ d) / l2, 0.0, 1.0)
+            r = np.sqrt(((q - (P[i] + a[:, None] * d)) ** 2).sum(1))
+            where = np.flatnonzero(sel)
+            win = r < best[where]
+            if not win.any():
+                continue
+            w_idx = where[win]
+            best[w_idx] = r[win]
+            out[w_idx] = np.where(a[win] > 0.5, j, i)
+            hit[w_idx] = True
+
+    new = labels.copy()
+    new.ravel()[idx[hit]] = out[hit]
+    mixed.ravel()[idx[hit]] = True
+    return new, mixed
+
+
 def silhouette(img: np.ndarray, pal: np.ndarray, bg: int) -> np.ndarray:
     """Where the artwork stops, decided by un-mixing the page colour back out.
 

@@ -209,6 +209,50 @@ trace to an opaque source over white measures the background you deliberately
 dropped: it reported ΔE 35 on a blue-page test image whose artwork was actually
 near perfect.
 
+## A blend of two colours is not a third colour
+
+Nearest-colour labelling has no idea what a blend is. Where a dark facet meets
+the white page, the anti-aliased pixels between them run along the line joining
+those two colours — and if the palette holds a mid tone, because some other part
+of the artwork really is that colour, the whole transition gets labelled with it.
+The result is a one or two pixel fringe of a colour that is not there, along
+every edge of that kind, its outer boundary torn because which pixel lands where
+is decided by noise a couple of units wide. That fringe is what reads as spray.
+
+Three cheaper fixes were tried and reverted, each trading the defect for a worse
+one. Blurring the coverage field clears the tearing and bends straight edges into
+waves. A thickness filter cannot see it, because the fringe joins a real region
+of the same colour and arrives as one large region with a frayed edge. Voting
+each uncertain pixel to its commonest neighbour takes the genuinely thin features
+with it — a globe's grid lines, the shaded side of a frame.
+
+It has to be decided at labelling, on the evidence. A pixel gets two hypotheses:
+*this is colour C*, or *this is a mixture of A and B, the colours present in my
+neighbourhood*. A fringe pixel lies almost exactly on the segment joining the two
+colours either side of it and only approximately on the mid tone; a drawn stroke
+lies on its own colour and on no such segment. So a pixel is re-labelled only
+when a mixture beats its own colour by a clear margin **and** its own colour has
+no unambiguous pixels nearby to vouch for it — and it goes to whichever end of
+the mixture it is nearer, so a two-pixel stroke keeps its middle.
+
+Only colours actually present within two pixels are considered. An earlier
+attempt searched every pair in the palette and painted the honey dipper's handle
+as a blend of two colours that were nowhere near it.
+
+That is 1.1 % of pixels across 55 marks. It takes them from 17,417 curves to
+15,021 and **improves** ΔE, 1.075 → 1.068 — the first change in this project to
+move every number the same way, which is what a correct fix looks like next to a
+trade.
+
+`scripts/thin_features.py` is the guard that made this safe to attempt. It picks
+probe points from the source alone — at the ridge of something two pixels wide
+or more, whose colour *is* a palette entry rather than a blend near one — and
+asks whether the rendered SVG still has that colour there. A fringe fails the
+second condition by construction, so removing one does not register, while
+erasing a grid line does. 99.3 % of thin features survived before this change and
+99.1 % after; the vote-based attempt that looked fine on one mark scored far
+worse and would have been caught in a minute.
+
 ## Straight is a shape, not a very flat curve
 
 A cubic has four control points and no reason to keep them collinear. Fit one to
@@ -276,7 +320,7 @@ Both now stop shrinking:
   two pixels wide and a hundred long fills its own bounding box completely.
 
 Across 55 marks between 150 and 270 px: 2,103 emitted regions → 300 and
-65,503 curves → 17,417, for ΔE 1.007 → 1.075. Nothing changes at 1024 px and
+65,503 curves → 15,021, for ΔE 1.007 → 1.068. Nothing changes at 1024 px and
 above: the three larger test images come out byte-identical.
 
 ## Where an edge is, and how well it is known
@@ -413,7 +457,7 @@ print(verify.format_report(verify.compare(rgb, shot)))
 ## Limits
 
 Measured on 55 logo marks the tool had never seen, default flags, cut from three
-contact sheets: mean ΔE 1.06, none over 2, nothing empty. **86 % of that error
+contact sheets: mean ΔE 1.07, none over 2, nothing empty. **86 % of that error
 sits within 2 px of a boundary**, where the source is a soft blend and the SVG is
 a hard edge; away from boundaries the mean is 0.17 ΔE. So the fills are right and
 the remaining disagreement is the tracer being crisper than its input.

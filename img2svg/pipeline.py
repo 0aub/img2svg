@@ -72,6 +72,8 @@ def convert(rgb: np.ndarray, cfg: Config, opaque: Optional[np.ndarray] = None) -
 
     pal = palette.extract(rgb, cfg)
     labels, _resid = matte.matte(rgb, pal)
+    # a blend of two colours is not a third colour; see matte.unmix
+    labels, _mixed = matte.unmix(rgb, labels, _resid, pal)
 
     aa = matte.blend_fraction(rgb, pal)
     if cfg.auto_overlap and cfg.overlap and aa < 0.01:

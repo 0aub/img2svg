@@ -430,3 +430,46 @@ def test_passing_trust_does_not_change_the_field():
     other, alpha, trust = coverage.neighbour_and_alpha(rgb, labels, pal)
     assert np.allclose(coverage.field_for(1, labels, other, alpha),
                        coverage.field_for(1, labels, other, alpha, trust))
+
+
+def _ramp(white, dark, mid, cols=(0.3, 0.68)):
+    """A hard edge with a couple of anti-aliased columns across it."""
+    pal = np.array([white, dark, mid], dtype=np.int16)
+    rgb = np.tile(np.asarray(white, float), (40, 40, 1))
+    rgb[:, 22:] = dark
+    for i, t in enumerate(cols):
+        rgb[:, 20 + i] = (1 - t) * np.asarray(white, float) + t * np.asarray(dark, float)
+    return pal, rgb.astype(np.uint8)
+
+
+def test_a_blend_is_not_handed_to_a_third_colour():
+    """Dark against white runs through mid green, and mid green is in the palette."""
+    white, dark = [255.0] * 3, [20.0, 90.0, 50.0]
+    pal, rgb = _ramp(white, dark, [138.0, 173.0, 153.0])
+    lab, resid = matte.matte(rgb, pal)
+    assert 2 in set(lab.ravel().tolist()), "nearest colour gives the blend to the mid tone"
+    out, mixed = matte.unmix(rgb, lab, resid, pal)
+    assert 2 not in set(out.ravel().tolist()), "a mixture is not a third colour"
+    assert mixed.any()
+
+
+def test_a_drawn_stroke_of_the_same_tone_survives():
+    """Thin is not imaginary: a real stroke sits on its colour, not on a segment."""
+    white, dark, mid = [255.0] * 3, [20.0, 90.0, 50.0], [138.0, 173.0, 153.0]
+    pal, rgb = _ramp(white, dark, mid)
+    rgb[:, 6:9] = np.asarray(mid, np.uint8)        # a three-pixel stroke of the mid tone
+    lab, resid = matte.matte(rgb, pal)
+    out, _ = matte.unmix(rgb, lab, resid, pal)
+    assert (out[:, 7] == 2).all(), "the stroke has its own pixels and must keep them"
+
+
+def test_unmix_leaves_a_two_colour_image_alone():
+    white, dark = [255.0] * 3, [20.0, 90.0, 50.0]
+    pal = np.array([white, dark], dtype=np.int16)
+    rgb = np.tile(np.asarray(white, float), (30, 30, 1))
+    rgb[:, 15:] = dark
+    rgb[:, 14] = 0.5 * (np.asarray(white, float) + np.asarray(dark, float))
+    rgb = rgb.astype(np.uint8)
+    lab, resid = matte.matte(rgb, pal)
+    out, mixed = matte.unmix(rgb, lab, resid, pal)
+    assert not mixed.any() and (out == lab).all()

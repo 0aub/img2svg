@@ -180,6 +180,12 @@ def _as_line(pts: np.ndarray) -> Cubic:
 #: How many standard errors the bend must clear before it counts as a bend.
 LINE_SIGMA = 3.0
 
+#: ...and how many points it takes before that argument is worth making. On a
+#: short run the standard error is wide enough to swallow a real bend, so a
+#: quarter of a small circle would come back as a chord. Below this, a run is
+#: only straight if it is straight outright.
+LINE_MIN_PTS = 9
+
 
 def _is_line(pts: np.ndarray, error: float) -> bool:
     """Prefer the simplest shape that fits.
@@ -194,7 +200,9 @@ def _is_line(pts: np.ndarray, error: float) -> bool:
     if _off_chord(pts) > LINE_MAX:
         return False
     sagitta, sigma = _bend(pts)
-    return sagitta <= error or sigma < LINE_SIGMA
+    if sagitta <= error:
+        return True
+    return len(pts) >= LINE_MIN_PTS and sigma < LINE_SIGMA
 
 
 def fit_run(pts: np.ndarray, t1: np.ndarray, t2: np.ndarray,
