@@ -34,12 +34,21 @@ class Region:
         return self.area / float((x1 - x0 + 1) * (y1 - y0 + 1))
 
 
+def _thickest(sub: np.ndarray) -> float:
+    """Width of the widest part of a region: twice its largest inscribed circle."""
+    return 2.0 * float(ndimage.distance_transform_edt(np.pad(sub, 1)).max())
+
+
 def components(mask: np.ndarray, label: int, cfg: Config) -> List[Region]:
-    """Connected components of ``mask``, minus the specks and the wisps.
+    """Connected components of ``mask``, minus the specks, wisps and seams.
 
     Density screening matters more than it sounds: a run of stray pixels along an
     edge can add up to a respectable area while covering a huge bounding box, and
     tracing one produces a spindly shard that belongs to nothing.
+
+    Thickness catches what density cannot. A sliver hugging one side of a stroke
+    fills its own bounding box, so its density is 1.0, but it is two pixels wide
+    and nobody drew it - it is where the quantiser cut a soft edge.
     """
     lab, n = ndimage.label(mask)
     if n == 0:
@@ -54,6 +63,8 @@ def components(mask: np.ndarray, label: int, cfg: Config) -> List[Region]:
         box = (xs.start, ys.start, xs.stop - 1, ys.stop - 1)
         r = Region(label, np.zeros(mask.shape, dtype=bool), area, box)
         if r.density < cfg.min_density:
+            continue
+        if cfg.min_thickness and _thickest(sub) < cfg.min_thickness:
             continue
         r.mask[sl] = sub
         out.append(r)

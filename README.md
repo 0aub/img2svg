@@ -246,12 +246,37 @@ Both now stop shrinking:
   3.5 % of the artwork's own typical feature width, measured as twice the upper
   quartile of the distance from each ink pixel to the nearest edge. Half a pixel
   of slack is invisible on a 50 px facet and visibly fattens a 6 px stroke.
+- A region never as thick as two fifths of a typical feature, capped at 4.5 px,
+  is dropped as a seam rather than drawn. Density cannot catch these: a sliver
+  two pixels wide and a hundred long fills its own bounding box completely.
 
 Across 55 marks between 150 and 270 px: **65,503 curves → 13,803** and 2,103
 emitted regions → 341, for ΔE 1.007 → 1.061. Most of those curves were tracing
 the wobble in a blurred edge, and most of those regions were specks. Nothing
 changes at 1024 px and above: the three larger test images come out
 byte-identical.
+
+## Where an edge is, and how well it is known
+
+Sub-pixel edges come from un-mixing: a boundary pixel is a blend of two palette
+colours, and the blend fraction says how far across it the edge runs. That
+fraction is a projection onto the segment joining the two colours, so **its error
+is the pixel noise divided by how far apart they are**.
+
+Between ink and the page, 250 RGB units apart, a couple of units of encoding
+noise place the edge to within a hundredth of a pixel. Between two tones of the
+same green 25 apart, the same noise is a tenth of a pixel, boundary pixels form a
+wide speckled band rather than a line, and the isoline drawn through it comes
+back torn — ragged fingers of one colour reaching into the other, which reads as
+spray along the edge.
+
+So the coverage field is averaged over a pixel where that ratio is poor and left
+exactly as measured where it is good, blending linearly between 25 and 70 units
+of separation. Corners live on the high-contrast boundaries, so they keep their
+points; the seams that were never really measured get the benefit of their
+neighbours. Across 39 shaded marks this removes about 600 curves for ΔE +0.004,
+and a larger averaging radius buys nothing further — what is left is banding in
+the source, not noise in the reading.
 
 ## Fidelity is not taste
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from img2svg import curves, matte, palette, segment, verify
+from img2svg import coverage, curves, matte, palette, segment, verify
 from img2svg.config import Config
 
 
@@ -383,7 +383,7 @@ def test_a_set_is_fully_covered_at_its_internal_boundaries():
     rgb = pal[labels].astype(np.uint8)
     rgb[:, 5] = ((pal[1] + pal[2]) // 2).astype(np.uint8)   # a half-and-half seam
 
-    other, alpha = coverage.neighbour_and_alpha(rgb, labels, pal)
+    other, alpha, trust = coverage.neighbour_and_alpha(rgb, labels, pal)
     art = coverage.field_for([1, 2], labels, other, alpha)
     assert art[:, 4:].min() > 0.95, f"seam dips to {art[:, 4:].min():.3f}"
     one = coverage.field_for(1, labels, other, alpha)
@@ -405,3 +405,32 @@ def test_pre_smoothing_keeps_a_sharp_vertex():
     corner = min(range(len(loop)), key=lambda i: loop[i][0] + loop[i][1])
     moved = lambda p: abs(p[corner][0] - loop[corner][0]) + abs(p[corner][1] - loop[corner][1])
     assert moved(guarded) < 0.2 < moved(naive)
+
+
+def test_trust_tracks_how_far_apart_the_two_colours_are():
+    """Alpha is a projection; its error is pixel noise over colour separation."""
+    pal = np.array([[255, 255, 255], [18, 90, 55], [30, 104, 68]], dtype=np.int16)
+    labels = np.zeros((9, 9), dtype=np.intp)
+    labels[:, 3:6] = 1
+    labels[:, 6:] = 2
+    rgb = pal[labels].astype(np.uint8)
+    _, _, trust = coverage.neighbour_and_alpha(rgb, labels, pal)
+    # page against ink: far apart, believed outright
+    assert trust[:, 2].min() == pytest.approx(1.0)
+    # two greens 25 units apart: not believed at all
+    assert trust[:, 5].max() < 0.35
+
+
+def test_an_untrusted_field_is_averaged_and_a_trusted_one_is_not():
+    pal = np.array([[255, 255, 255], [18, 90, 55]], dtype=np.int16)
+    labels = np.zeros((12, 12), dtype=np.intp)
+    labels[:, 6:] = 1
+    rgb = pal[labels].astype(np.uint8)
+    other, alpha, trust = coverage.neighbour_and_alpha(rgb, labels, pal)
+    plain = coverage.field_for(1, labels, other, alpha)
+    kept = coverage.field_for(1, labels, other, alpha, trust)
+    assert np.allclose(plain, kept), "a high-contrast edge must be left alone"
+    softened = coverage.field_for(1, labels, other, alpha, np.zeros_like(trust))
+    assert not np.allclose(plain, softened)
+    # averaging must not move a straight edge, only smooth it
+    assert abs(softened.sum() - plain.sum()) < 0.5 * plain.shape[0]

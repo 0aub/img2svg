@@ -57,6 +57,16 @@ class Config:
     """*scaled* Discard regions smaller than this many pixels."""
     min_density: float = 0.08
     """Discard wispy regions whose area / bounding-box area is below this."""
+    min_thickness: float = 0.0
+    """Discard regions never thicker than this many px. Set by the pipeline.
+
+    Density misses the shape that matters here. Where two tones meet across a
+    soft edge, the quantiser hands a long thin sliver to whichever colour is
+    nearer, and a sliver two pixels wide and a hundred long fills its own
+    bounding box completely - density 1.0 - while being nothing anyone drew. Its
+    border is decided pixel by pixel on a difference near the noise, so it comes
+    out torn, and reads as spray along the edge.
+    """
     min_hole_area: float = 60.0
     """*scaled* Fill holes smaller than this instead of cutting them out."""
 
@@ -182,6 +192,14 @@ class Config:
     #: accuracy (dE 1.006 -> 1.035) while still shedding a fifth of its curves,
     #: and the filled marks shed three fifths for dE +0.03.
     TOLERANCE_SHARE = 0.035
+
+    #: A region much thinner than the artwork's own features is a seam, not a
+    #: shape. Measured across 55 marks, the two separate cleanly: the slivers
+    #: run 0.17 to 0.33 of the typical feature width, the thinnest real details
+    #: 0.71 and up. The absolute cap keeps this from reaching into large images,
+    #: where two fifths of a typical feature is a lot of genuine detail.
+    MIN_THICKNESS = 4.5
+    MIN_THICKNESS_SHARE = 0.4
 
     def scaled(self, width: int, height: int) -> "Config":
         """Return a copy with *scaled* fields adjusted for this image size."""

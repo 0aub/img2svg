@@ -100,12 +100,14 @@ def convert(rgb: np.ndarray, cfg: Config, opaque: Optional[np.ndarray] = None) -
     # wavy. A crisp source does pin its edges down, so this is not applied there,
     # and the slack is capped against how thick the artwork actually is, because
     # what is invisible on a wide facet visibly fattens a thin stroke.
+    typical = _thickness(content)
     if aa >= 0.01:
         floor = min(Config.SOFT_EDGE_TOLERANCE,
-                    Config.TOLERANCE_SHARE * _thickness(content),
-                    cfg_in_tolerance)
+                    Config.TOLERANCE_SHARE * typical, cfg_in_tolerance)
         if cfg.tolerance < floor:
             cfg = cfg.replace(tolerance=floor)
+        cfg = cfg.replace(min_thickness=min(Config.MIN_THICKNESS,
+                                            Config.MIN_THICKNESS_SHARE * typical))
 
     radius = int(round(cfg.blur))
     if radius >= 1:
@@ -188,8 +190,8 @@ def _document(labels, silhouette, pal, counts, cfg, drop, notes, width, height, 
     stacked = cfg.layers == "stacked"
     if cfg.layers not in ("flat", "stacked"):
         raise ValueError("--layers takes 'flat' or 'stacked'")
-    other, alpha = cov if cov else (None, None)
-    f = coverage.field_for(order, labels, other, alpha) if cov else None
+    other, alpha, trust = cov if cov else (None, None, None)
+    f = coverage.field_for(order, labels, other, alpha, trust) if cov else None
     base_d, base_segs, _ = regions.mask_path(silhouette, cfg, cfg.inset, f)
     if snap and "container" in cfg.regularize:
         snapped, note = regularize.container(silhouette, width, height, cfg)
@@ -210,10 +212,10 @@ def _document(labels, silhouette, pal, counts, cfg, drop, notes, width, height, 
         if stacked:
             # cover this colour plus everything painted on top of it, so no
             # boundary in the document ever has a gap for the base to show
-            f = coverage.field_for(order[i:], labels, other, alpha) if cov else None
+            f = coverage.field_for(order[i:], labels, other, alpha, trust) if cov else None
             d, segs, nreg = regions.mask_path(np.isin(inner, order[i:]), cfg, cfg.inset, f)
         else:
-            f = coverage.field_for(c, labels, other, alpha) if cov else None
+            f = coverage.field_for(c, labels, other, alpha, trust) if cov else None
             d, segs, nreg = regions.class_path(inner, c, cfg, cfg.inset - cfg.overlap, f)
         if not d:
             continue

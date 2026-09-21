@@ -13,17 +13,34 @@ settled. It only says how far across the pixel the boundary sits.
 
 from __future__ import annotations
 
-from typing import Tuple
+from typing import Optional, Tuple
 
 import numpy as np
 from scipy import ndimage
 
 
-def neighbour_and_alpha(rgb: np.ndarray, labels: np.ndarray,
-                        pal: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-    """For every pixel: the label it borders, and how much of it is its own.
+#: Colour separations, in RGB units, between which alpha stops being trusted.
+#: Alpha is a projection onto the segment joining two palette colours, so its
+#: error is the pixel noise divided by how far apart those colours are. Ordinary
+#: encoding noise is a couple of units, so a boundary between colours 250 apart
+#: - ink against the page - locates itself to a hundredth of a pixel, while one
+#: between two tones 25 apart is guessing to within a tenth. Below LOW the
+#: estimate is worth nothing on its own; above HIGH it needs no help.
+TRUST_LOW, TRUST_HIGH = 25.0, 70.0
 
-    Returns ``(other, alpha)``. ``alpha`` is 1 away from any boundary.
+#: How far to average an untrusted field, in pixels. The edge under it is smooth
+#: at this scale, so neighbours are better evidence for where it runs than the
+#: pixel's own reading is.
+TRUST_BLUR = 1.0
+
+
+def neighbour_and_alpha(rgb: np.ndarray, labels: np.ndarray,
+                        pal: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """For every pixel: the label it borders, how much of it is its own, and
+    how far that second number can be trusted.
+
+    Returns ``(other, alpha, trust)``. ``alpha`` is 1 away from any boundary,
+    and ``trust`` runs 0 to 1 with how far apart the two colours are.
     """
     P = pal.astype(np.float32)
     k = len(P)
@@ -46,16 +63,25 @@ def neighbour_and_alpha(rgb: np.ndarray, labels: np.ndarray,
         a = ((rgb.astype(np.float32) - Po) * d).sum(-1) / l2
     a = np.where(np.isfinite(a), a, 1.0)
     alpha = np.where(interior, 1.0, np.clip(a, 0.0, 1.0)).astype(np.float32)
-    return other, alpha
+    sep = np.sqrt(l2, dtype=np.float32)
+    trust = np.clip((sep - TRUST_LOW) / (TRUST_HIGH - TRUST_LOW), 0.0, 1.0)
+    return other, alpha, trust.astype(np.float32)
 
 
 def field_for(classes, labels: np.ndarray, other: np.ndarray,
-              alpha: np.ndarray) -> np.ndarray:
+              alpha: np.ndarray, trust: Optional[np.ndarray] = None) -> np.ndarray:
     """Coverage of one class or a set of them, in [0, 1].
 
     The per-pixel coverages partition, so the coverage of a union is the sum -
     which is what lets the silhouette and the stacked layers use the same
     machinery as a single colour.
+
+    Where ``trust`` is low the field is replaced by its local average. Between
+    two similar tones the per-pixel estimate is mostly noise, and an isoline
+    drawn through it comes back torn - ragged fingers of one colour reaching
+    into the other, which reads as spray along the edge. Averaging is applied in
+    proportion to the distrust, so the boundaries that carry the corners - ink
+    against the page, far apart in colour - are left exactly where they were.
     """
     want = np.asarray([classes] if np.isscalar(classes) else list(classes))
     f = np.zeros(labels.shape, dtype=np.float32)
@@ -70,4 +96,9 @@ def field_for(classes, labels: np.ndarray, other: np.ndarray,
     f[mine] += alpha[mine]
     theirs = np.isin(other, want)
     f[theirs] += 1.0 - alpha[theirs]
-    return np.clip(f, 0.0, 1.0, out=f)
+    np.clip(f, 0.0, 1.0, out=f)
+    if trust is not None and (trust < 1.0).any():
+        smooth = ndimage.gaussian_filter(f, TRUST_BLUR, mode="nearest")
+        f = trust * f + (1.0 - trust) * smooth
+        np.clip(f, 0.0, 1.0, out=f)
+    return f
