@@ -170,3 +170,46 @@ def test_a_straight_segment_is_written_as_a_line():
                                    ((30.0, 10.0), (20.0, 25.0), (0.0, 30.0))], prec=1)
     assert d.count("L") == 1 and d.count("C") == 1
     assert "L30 0" in d
+
+
+def test_an_arc_comes_back_as_an_arc():
+    """A cubic through a circle is close but never round."""
+    from img2svg import fitting
+
+    t = np.linspace(0.2, 1.9, 40)
+    r, cx, cy = 40.0, 60.0, 55.0
+    pts = np.stack([cx + r * np.cos(t), cy + r * np.sin(t)], 1)
+    segs = fitting._as_arc(pts, 0.4)
+    assert segs is not None and len(segs) >= 2, "a 97 degree arc needs two cubics"
+    for a, c1, c2, b in segs:
+        for p in (a, b):
+            assert abs(np.hypot(*(p - [cx, cy])) - r) < 0.05
+
+
+def test_a_straight_run_is_not_called_an_arc():
+    from img2svg import fitting
+
+    rng = np.random.default_rng(17)
+    pts = np.stack([np.linspace(0, 60, 40), rng.normal(0, 0.12, 40)], 1)
+    assert fitting._as_arc(pts, 0.4) is None
+
+
+def test_a_corner_that_is_not_round_is_refused():
+    """A superellipse near n=2 really is circular to a seventh of a pixel, and is
+    accepted. One squarer or rounder than that is not."""
+    from img2svg import fitting
+
+    t = np.linspace(0, math.pi / 2, 30)
+    r = 60.0
+    for n, want_arc in ((1.6, False), (1.77, True), (2.4, False)):
+        pts = np.stack([r * np.abs(np.cos(t)) ** (2 / n),
+                        r * np.abs(np.sin(t)) ** (2 / n)], 1)
+        assert (fitting._as_arc(pts, 0.4) is not None) is want_arc, n
+
+
+def test_an_arc_that_doubles_back_is_refused():
+    from img2svg import fitting
+
+    t = np.concatenate([np.linspace(0, 1.0, 20), np.linspace(1.0, 0.2, 20)])
+    pts = np.stack([40 * np.cos(t), 40 * np.sin(t)], 1)
+    assert fitting._as_arc(pts, 0.4) is None

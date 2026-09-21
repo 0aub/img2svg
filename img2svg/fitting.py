@@ -205,6 +205,92 @@ def _is_line(pts: np.ndarray, error: float) -> bool:
     return len(pts) >= LINE_MIN_PTS and sigma < LINE_SIGMA
 
 
+#: A run may be called an arc when its radial spread is this share of `error`.
+#: Same argument as the line: the simplest shape that accounts for the points is
+#: the one the artwork was drawn with, and a free cubic will not find it.
+#:
+#: Swept 0 to 1 over 55 marks and the honey icon. This is the value where every
+#: number improves at once; above 0.5 the honey card's corners start being read
+#: as circular when they are a superellipse, and its worst block triples.
+ARC_TOL = 0.35
+
+#: How many standard errors the curvature must clear to be an arc rather than
+#: noise, and how many points it takes to make that argument.
+ARC_SIGMA = 4.0
+ARC_MIN_PTS = 12
+
+#: Widest span fitted as one cubic. A quarter circle is exact to about 3e-4 of
+#: the radius; a half circle as one cubic is visibly wrong.
+ARC_MAX_SPAN = math.pi / 2
+
+
+def _fit_circle(pts: np.ndarray):
+    """Algebraic circle fit. Returns (cx, cy, r, rms radial error) or None."""
+    x, y = pts[:, 0], pts[:, 1]
+    A = np.stack([x, y, np.ones_like(x)], 1)
+    b = x * x + y * y
+    try:
+        c, *_ = np.linalg.lstsq(A, b, rcond=None)
+    except np.linalg.LinAlgError:
+        return None
+    cx, cy = c[0] / 2.0, c[1] / 2.0
+    inner = c[2] + cx * cx + cy * cy
+    if inner <= 1e-9:
+        return None
+    r = math.sqrt(inner)
+    rad = np.hypot(x - cx, y - cy)
+    return cx, cy, r, float(np.sqrt(((rad - r) ** 2).mean()))
+
+
+def _arc_cubics(cx, cy, r, a0, a1, sweep) -> List[Cubic]:
+    """Exact-enough cubics for a circular arc, split so no span exceeds 90 degrees."""
+    n = max(1, int(math.ceil(abs(sweep) / ARC_MAX_SPAN)))
+    step = sweep / n
+    k = 4.0 / 3.0 * math.tan(step / 4.0)
+    out: List[Cubic] = []
+    for i in range(n):
+        t0 = a0 + i * step
+        t1 = t0 + step
+        p0 = np.array([cx + r * math.cos(t0), cy + r * math.sin(t0)])
+        p3 = np.array([cx + r * math.cos(t1), cy + r * math.sin(t1)])
+        d0 = np.array([-math.sin(t0), math.cos(t0)]) * r * k
+        d1 = np.array([-math.sin(t1), math.cos(t1)]) * r * k
+        out.append((p0, p0 + d0, p3 - d1, p3))
+    return out
+
+
+def _as_arc(pts: np.ndarray, error: float) -> Optional[List[Cubic]]:
+    """Fit a circular arc, if the points are one.
+
+    A cubic through a run of a circle is close but never round: the radius
+    wanders, and on a mark built from discs and domes that reads as lumpy
+    exactly the way a bowed cubic on a straight run reads as wavy. The test is
+    the same shape as the line's - is the curvature real, and does the fit hold
+    across the whole run - and the arc is emitted as cubics, so nothing
+    downstream has to know.
+    """
+    if len(pts) < ARC_MIN_PTS:
+        return None
+    got = _fit_circle(pts)
+    if got is None:
+        return None
+    cx, cy, r, rms = got
+    if not (r > 2.0 and np.isfinite(r)) or rms > ARC_TOL * error:
+        return None
+    ang = np.arctan2(pts[:, 1] - cy, pts[:, 0] - cx)
+    d = np.diff(ang)
+    d = (d + math.pi) % (2 * math.pi) - math.pi
+    if np.abs(d).max() > 0.6 or abs(float(d.sum())) < 0.12:
+        return None                       # doubles back, or barely turns at all
+    if not (np.all(d >= -1e-12) or np.all(d <= 1e-12)):
+        return None                       # must turn one way the whole run
+    # curvature has to be real: a straight run fits a huge circle just as well
+    sag, sigma = _bend(pts)
+    if sigma < ARC_SIGMA:
+        return None
+    return _arc_cubics(cx, cy, r, float(ang[0]), float(ang[-1]), float(d.sum()))
+
+
 def fit_run(pts: np.ndarray, t1: np.ndarray, t2: np.ndarray,
             error: float, depth: int = 0) -> List[Cubic]:
     """Fit one open run of points, splitting only where a cubic cannot reach."""
@@ -216,6 +302,10 @@ def fit_run(pts: np.ndarray, t1: np.ndarray, t2: np.ndarray,
 
     if _is_line(pts, error):
         return [_as_line(pts)]
+
+    arc = _as_arc(pts, error)
+    if arc is not None:
+        return arc
 
     u = _chord_params(pts)
     b = _generate(pts, u, t1, t2)

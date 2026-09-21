@@ -253,7 +253,40 @@ erasing a grid line does. 99.3 % of thin features survived before this change an
 99.1 % after; the vote-based attempt that looked fine on one mark scored far
 worse and would have been caught in a minute.
 
-## Straight is a shape, not a very flat curve
+## Straight is a shape, and so is round
+
+A cubic has four control points and no reason to keep them collinear, or at a
+constant distance from anything. Fit one to a run of contour that is straight
+but noisy and it comes back a shallow S — within tolerance everywhere, and
+bowed. Fit one to a run of a circle and it comes back close but never round: the
+radius wanders. Logos are mostly straight edges and circular arcs, so every one
+of them arrived slightly wrong — bars that undulate, strokes that thicken and
+thin, discs that are lumpy — and no accuracy number showed it, because each
+curve really was within a tenth of a pixel of the edge.
+
+So each run is tested against the simpler shapes before a free cubic is fitted:
+a straight segment, then a circular arc, then a cubic. The arc is emitted as
+cubics split at 90°, exact to about 3 × 10⁻⁴ of the radius, so nothing
+downstream has to know.
+
+Telling these apart is the whole problem, and the largest deviation cannot do
+it: a straight edge with noise on it and an edge that genuinely bends reach the
+same peak. The test fits a parabola in the frame of the chord and asks two
+questions — how big is the sagitta, and is the quadratic term larger than its
+own standard error. Noise fits a small parabola by chance; a real bend clears
+its uncertainty by orders of magnitude. On a 60 px run, contour noise comes out
+at 1.1 standard errors and a 0.3 px bow at more than a hundred.
+
+The arc test carries the same guard plus two more: the run has to turn one way
+for its whole length, and the circle has to hold within a third of the tolerance.
+That last number was swept against the honey icon, whose card corners are a
+superellipse at n = 1.77 — circular to a seventh of a pixel at that radius, so
+they are accepted, while anything squarer or rounder is not. Above 0.5 the fit
+starts claiming corners it should not and the icon's worst block triples.
+
+Across 55 marks: 30,638 curves → 14,328, and ΔE 1.050 → 1.067.
+
+
 
 A cubic has four control points and no reason to keep them collinear. Fit one to
 a run of contour that is straight but noisy and it comes back a shallow S —
@@ -273,11 +306,6 @@ questions of it — how big is the sagitta, and is the quadratic term larger tha
 its own standard error. Noise fits a small parabola by chance; a real bend clears
 its uncertainty by orders of magnitude. On a 60 px run, contour noise comes out
 at 1.1 standard errors, a 0.3 px bow at more than a hundred.
-
-Across 55 marks this takes 30,638 curves to 17,417 and the total from 585 KB to
-476 KB, for ΔE 1.050 → 1.075 — the usual direction, and the usual reason: a
-bowed line tracks a noisy edge slightly better than the straight line the artist
-drew.
 
 ## Shapes the source was reaching for
 
@@ -320,7 +348,7 @@ Both now stop shrinking:
   two pixels wide and a hundred long fills its own bounding box completely.
 
 Across 55 marks between 150 and 270 px: 2,103 emitted regions → 300 and
-65,503 curves → 15,021, for ΔE 1.007 → 1.068. Nothing changes at 1024 px and
+65,503 curves → 14,328, for ΔE 1.007 → 1.067. Nothing changes at 1024 px and
 above: the three larger test images come out byte-identical.
 
 ## Where an edge is, and how well it is known
