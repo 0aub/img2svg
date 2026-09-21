@@ -178,21 +178,6 @@ class Config:
     #: No area floor may exceed this share of the frame.
     FLOOR_SHARE = 0.001
 
-    #: Tolerance ceiling for anti-aliased sources, applied in the pipeline.
-    #: Below this the fitter is chasing an edge position the source does not
-    #: pin down that precisely, and spends curves doing it.
-    SOFT_EDGE_TOLERANCE = 0.45
-
-    #: ...but never more than this share of the artwork's typical feature width.
-    #: Half a pixel of slack is invisible on a 50 px facet and visibly fattens a
-    #: 6 px stroke, so line art earns a tighter floor than filled shapes, from
-    #: the drawing's own measurements rather than from an assumption about it.
-    #:
-    #: Swept over 55 marks in three styles. At this share the line art keeps its
-    #: accuracy (dE 1.006 -> 1.035) while still shedding a fifth of its curves,
-    #: and the filled marks shed three fifths for dE +0.03.
-    TOLERANCE_SHARE = 0.035
-
     #: A region much thinner than the artwork's own features is a seam, not a
     #: shape. Measured across 55 marks, the two separate cleanly: the slivers
     #: run 0.17 to 0.33 of the typical feature width, the thinnest real details

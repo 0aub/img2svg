@@ -241,42 +241,36 @@ Both now stop shrinking:
 - `--min-area` and `--min-hole-area` floor at 40 px and 20 px, themselves capped
   at a thousandth of the frame so a 64 px sprite keeps shapes that are small in
   pixels and large in the picture.
-- `--tolerance` floors at 0.45 px, but only when the source has anti-aliased
-  edges — crisp pixel art does say exactly where its edges are — and never above
-  3.5 % of the artwork's own typical feature width, measured as twice the upper
-  quartile of the distance from each ink pixel to the nearest edge. Half a pixel
-  of slack is invisible on a 50 px facet and visibly fattens a 6 px stroke.
+- `--tolerance` is **not** floored, though it was tried. Raising it does shed the
+  wobble — and it sheds it by letting the fitter bow a long straight run by that
+  much, so an interlocking-squares mark came back visibly melted. Tolerance is
+  permission to deviate, which is the wrong instrument for suppressing noise.
 - A region never as thick as two fifths of a typical feature, capped at 4.5 px,
   is dropped as a seam rather than drawn. Density cannot catch these: a sliver
   two pixels wide and a hundred long fills its own bounding box completely.
 
-Across 55 marks between 150 and 270 px: **65,503 curves → 13,803** and 2,103
-emitted regions → 341, for ΔE 1.007 → 1.061. Most of those curves were tracing
-the wobble in a blurred edge, and most of those regions were specks. Nothing
-changes at 1024 px and above: the three larger test images come out
-byte-identical.
+Across 55 marks between 150 and 270 px: 2,103 emitted regions → 300 and
+79,266 curves → 30,638, for ΔE 1.007 → 1.036. Nothing changes at 1024 px and
+above: the three larger test images come out byte-identical.
 
 ## Where an edge is, and how well it is known
 
 Sub-pixel edges come from un-mixing: a boundary pixel is a blend of two palette
 colours, and the blend fraction says how far across it the edge runs. That
 fraction is a projection onto the segment joining the two colours, so **its error
-is the pixel noise divided by how far apart they are**.
+is the pixel noise divided by how far apart they are**. Between ink and the page,
+250 RGB units apart, the edge is placed to within a hundredth of a pixel. Between
+two tones of the same green 25 apart, to within a tenth, and the boundary pixels
+form a speckled band rather than a line.
 
-Between ink and the page, 250 RGB units apart, a couple of units of encoding
-noise place the edge to within a hundredth of a pixel. Between two tones of the
-same green 25 apart, the same noise is a tenth of a pixel, boundary pixels form a
-wide speckled band rather than a line, and the isoline drawn through it comes
-back torn — ragged fingers of one colour reaching into the other, which reads as
-spray along the edge.
-
-So the coverage field is averaged over a pixel where that ratio is poor and left
-exactly as measured where it is good, blending linearly between 25 and 70 units
-of separation. Corners live on the high-contrast boundaries, so they keep their
-points; the seams that were never really measured get the benefit of their
-neighbours. Across 39 shaded marks this removes about 600 curves for ΔE +0.004,
-and a larger averaging radius buys nothing further — what is left is banding in
-the source, not noise in the reading.
+`coverage.neighbour_and_alpha` reports that as a per-pixel `trust`. **Nothing
+currently acts on it**, and the reason is worth recording. Averaging the coverage
+field where trust is low does clear the tearing it causes — and it bends straight
+edges, turning pixel-scale nicks into visible waves, which on a geometric mark is
+the worse of the two. Nor can the two cases be told apart by separation: a mark
+that tears and a mark that must stay straight both have their main boundaries
+near 25 units. A smoothing that respects straightness would fix this; a blur does
+not.
 
 ## Fidelity is not taste
 

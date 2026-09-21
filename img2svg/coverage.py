@@ -28,10 +28,12 @@ from scipy import ndimage
 #: estimate is worth nothing on its own; above HIGH it needs no help.
 TRUST_LOW, TRUST_HIGH = 25.0, 70.0
 
-#: How far to average an untrusted field, in pixels. The edge under it is smooth
-#: at this scale, so neighbours are better evidence for where it runs than the
-#: pixel's own reading is.
-TRUST_BLUR = 1.0
+#: Averaging an untrusted field was tried and removed. It does clear the tearing,
+#: and it also bends straight edges: on a geometric mark the wobble turns from
+#: pixel-scale nicks into visible waves, which is the worse of the two. The two
+#: cases cannot be told apart by separation either - the marks that tear and the
+#: marks that must stay straight both have their main boundaries near 25 units.
+#: `trust` is still reported, for a smoothing that respects straightness.
 
 
 def neighbour_and_alpha(rgb: np.ndarray, labels: np.ndarray,
@@ -76,12 +78,7 @@ def field_for(classes, labels: np.ndarray, other: np.ndarray,
     which is what lets the silhouette and the stacked layers use the same
     machinery as a single colour.
 
-    Where ``trust`` is low the field is replaced by its local average. Between
-    two similar tones the per-pixel estimate is mostly noise, and an isoline
-    drawn through it comes back torn - ragged fingers of one colour reaching
-    into the other, which reads as spray along the edge. Averaging is applied in
-    proportion to the distrust, so the boundaries that carry the corners - ink
-    against the page, far apart in colour - are left exactly where they were.
+    ``trust`` is accepted and currently unused; see the note on TRUST_BLUR.
     """
     want = np.asarray([classes] if np.isscalar(classes) else list(classes))
     f = np.zeros(labels.shape, dtype=np.float32)
@@ -96,9 +93,4 @@ def field_for(classes, labels: np.ndarray, other: np.ndarray,
     f[mine] += alpha[mine]
     theirs = np.isin(other, want)
     f[theirs] += 1.0 - alpha[theirs]
-    np.clip(f, 0.0, 1.0, out=f)
-    if trust is not None and (trust < 1.0).any():
-        smooth = ndimage.gaussian_filter(f, TRUST_BLUR, mode="nearest")
-        f = trust * f + (1.0 - trust) * smooth
-        np.clip(f, 0.0, 1.0, out=f)
-    return f
+    return np.clip(f, 0.0, 1.0, out=f)

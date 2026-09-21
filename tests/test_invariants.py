@@ -421,16 +421,12 @@ def test_trust_tracks_how_far_apart_the_two_colours_are():
     assert trust[:, 5].max() < 0.35
 
 
-def test_an_untrusted_field_is_averaged_and_a_trusted_one_is_not():
+def test_passing_trust_does_not_change_the_field():
+    """It is measured and reported; nothing acts on it. See TRUST_BLUR."""
     pal = np.array([[255, 255, 255], [18, 90, 55]], dtype=np.int16)
     labels = np.zeros((12, 12), dtype=np.intp)
     labels[:, 6:] = 1
     rgb = pal[labels].astype(np.uint8)
     other, alpha, trust = coverage.neighbour_and_alpha(rgb, labels, pal)
-    plain = coverage.field_for(1, labels, other, alpha)
-    kept = coverage.field_for(1, labels, other, alpha, trust)
-    assert np.allclose(plain, kept), "a high-contrast edge must be left alone"
-    softened = coverage.field_for(1, labels, other, alpha, np.zeros_like(trust))
-    assert not np.allclose(plain, softened)
-    # averaging must not move a straight edge, only smooth it
-    assert abs(softened.sum() - plain.sum()) < 0.5 * plain.shape[0]
+    assert np.allclose(coverage.field_for(1, labels, other, alpha),
+                       coverage.field_for(1, labels, other, alpha, trust))

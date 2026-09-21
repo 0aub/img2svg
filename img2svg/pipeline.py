@@ -67,7 +67,6 @@ class Result:
 
 def convert(rgb: np.ndarray, cfg: Config, opaque: Optional[np.ndarray] = None) -> Result:
     h, w = rgb.shape[:2]
-    cfg_in_tolerance = cfg.tolerance      # before scaling, so --tolerance is honoured
     cfg = cfg.scaled(w, h)
     notes: List[str] = []
 
@@ -94,20 +93,12 @@ def convert(rgb: np.ndarray, cfg: Config, opaque: Optional[np.ndarray] = None) -
         if bg is not None:
             labels = np.where(content, labels, bg)
 
-    # A soft edge does not say exactly where it is. Below about half a pixel the
-    # fitter stops following the drawing and starts following the blend: it
-    # spends curves on wobbles that are not there and a straight edge comes back
-    # wavy. A crisp source does pin its edges down, so this is not applied there,
-    # and the slack is capped against how thick the artwork actually is, because
-    # what is invisible on a wide facet visibly fattens a thin stroke.
-    typical = _thickness(content)
+    # Slivers are dropped rather than drawn; see Config.MIN_THICKNESS. This is
+    # only for anti-aliased sources, since crisp pixel art has no blend band for
+    # the quantiser to cut a sliver out of.
     if aa >= 0.01:
-        floor = min(Config.SOFT_EDGE_TOLERANCE,
-                    Config.TOLERANCE_SHARE * typical, cfg_in_tolerance)
-        if cfg.tolerance < floor:
-            cfg = cfg.replace(tolerance=floor)
         cfg = cfg.replace(min_thickness=min(Config.MIN_THICKNESS,
-                                            Config.MIN_THICKNESS_SHARE * typical))
+                                            Config.MIN_THICKNESS_SHARE * _thickness(content)))
 
     radius = int(round(cfg.blur))
     if radius >= 1:
