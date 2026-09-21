@@ -490,6 +490,23 @@ sits within 2 px of a boundary**, where the source is a soft blend and the SVG i
 a hard edge; away from boundaries the mean is 0.17 ΔE. So the fills are right and
 the remaining disagreement is the tracer being crisper than its input.
 
+- Sharing a radius between arcs was built twice and dropped both times. Across the
+  55 marks 51.5 % of arc radii sit within 0.6 px of another in the same mark,
+  against 41.0 % for a permutation null — about 10 points of real repetition. Both
+  designs reached it and neither earned its place. Pinning both endpoints and
+  moving only the centre is safe but *invisible*: a shallow run barely moves when
+  its radius changes, and a deep one moves by the whole change and inward, so a
+  disc traced as three runs comes back lobed rather than rounder — the arcs that
+  can be unified safely are exactly the ones where unifying them changes nothing
+  you can see. Letting the shared joints move instead does tighten the radius
+  families by 34 % (0.207 px → 0.138 px) for 2.5 % fewer bytes, but it creases 57
+  joints by more than 5° of tangent mismatch, the worst by 34°, and a crease is
+  visible where a tighter radius is not. Two attempts to remove the creases —
+  taking the boundary direction from the neighbouring arc, and giving co-circular
+  neighbours one centre rather than just one radius — made no difference or made
+  it worse.
+- Line-angle regularity is a coincidence, not structure. 88.6 % of line angles sit
+  within 2° of another in the same mark, and 87.0 % do under a permutation null.
 - Gradients become flat bands. Real `linearGradient` output was prototyped and
   measured before being dropped: across shaded marks, a least-squares plane fit
   the region's colour with a residual of 15–41 RGB units, because the shading
