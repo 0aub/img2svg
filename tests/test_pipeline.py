@@ -63,8 +63,55 @@ def test_autoscale_scales_pixel_knobs():
     cfg = Config(blur=6.0, min_area=120.0)
     small = cfg.scaled(256, 256)
     assert small.blur == pytest.approx(1.5)
-    assert small.min_area == pytest.approx(120 * 0.0625)
     assert cfg.scaled(1024, 1024).blur == pytest.approx(6.0)
+    # min_area would scale to 7.5 px, which keeps every quantiser speck
+    assert small.min_area == Config.SCALE_FLOOR["min_area"]
+
+
+def test_area_knobs_stop_shrinking_on_small_images():
+    """A 4 px speck is noise at any canvas size."""
+    for name, floor in Config.SCALE_FLOOR.items():
+        assert getattr(Config().scaled(512, 512), name) == pytest.approx(floor)
+        # and the floor must not reach up into full-size images
+        assert getattr(Config().scaled(1024, 1024), name) > floor
+
+
+def test_an_area_floor_is_capped_by_the_frame():
+    """A shape that is small in pixels can still be large in a 64 px sprite."""
+    small = Config().scaled(64, 64)
+    assert small.min_area == pytest.approx(Config.FLOOR_SHARE * 64 * 64)
+    assert small.min_area < Config.SCALE_FLOOR["min_area"]
+
+
+def test_a_floor_never_overrides_what_was_asked_for():
+    assert Config(min_area=5.0).scaled(190, 190).min_area == pytest.approx(5.0)
+
+
+def test_no_autoscale_means_no_floor_either():
+    assert Config(autoscale=False).scaled(190, 190).min_area == pytest.approx(
+        Config().min_area)
+
+
+def test_a_crisp_source_keeps_its_tight_tolerance():
+    """The tolerance floor exists for blended edges; hard pixels do not need it."""
+    img = np.full((200, 200, 3), 255, dtype=np.uint8)
+    img[40:160, 40:160] = (0x27, 0x14, 0x20)          # no anti-aliasing at all
+    res = convert(img, Config())
+    assert res.segments > 0
+    soft = img.copy()
+    soft[39, 40:160] = soft[160, 40:160] = (0x90, 0x88, 0x8c)   # blend the edges
+    assert convert(soft, Config()).segments > 0
+
+
+def test_thin_line_art_gets_a_tighter_floor_than_a_filled_shape():
+    from img2svg.pipeline import _thickness
+
+    ink = np.zeros((200, 200), bool)
+    ink[98:102, 20:180] = True                        # a 4 px stroke
+    assert _thickness(ink) == pytest.approx(4.0, abs=1.0)
+    ink = np.zeros((200, 200), bool)
+    ink[50:150, 50:150] = True                        # a 100 px block
+    assert _thickness(ink) > 40
 
 
 def test_corner_window_shrinks_with_the_image():

@@ -67,20 +67,21 @@ class Result:
 
 def convert(rgb: np.ndarray, cfg: Config, opaque: Optional[np.ndarray] = None) -> Result:
     h, w = rgb.shape[:2]
+    cfg_in_tolerance = cfg.tolerance      # before scaling, so --tolerance is honoured
     cfg = cfg.scaled(w, h)
     notes: List[str] = []
 
     pal = palette.extract(rgb, cfg)
     labels, _resid = matte.matte(rgb, pal)
 
-    if cfg.auto_overlap and cfg.overlap:
-        aa = matte.blend_fraction(rgb, pal)
-        if aa < 0.01:
-            cfg = cfg.replace(overlap=0.0)
-            notes.append(
-                "source has no anti-aliasing (%.2f%% blended pixels), so layers "
-                "are not grown to hide seams" % (100 * aa)
-            )
+    aa = matte.blend_fraction(rgb, pal)
+    if cfg.auto_overlap and cfg.overlap and aa < 0.01:
+        cfg = cfg.replace(overlap=0.0)
+        notes.append(
+            "source has no anti-aliasing (%.2f%% blended pixels), so layers "
+            "are not grown to hide seams" % (100 * aa)
+        )
+
 
     if opaque is not None:
         bg = None
@@ -92,6 +93,19 @@ def convert(rgb: np.ndarray, cfg: Config, opaque: Optional[np.ndarray] = None) -
                    else matte.silhouette(rgb, pal, bg))
         if bg is not None:
             labels = np.where(content, labels, bg)
+
+    # A soft edge does not say exactly where it is. Below about half a pixel the
+    # fitter stops following the drawing and starts following the blend: it
+    # spends curves on wobbles that are not there and a straight edge comes back
+    # wavy. A crisp source does pin its edges down, so this is not applied there,
+    # and the slack is capped against how thick the artwork actually is, because
+    # what is invisible on a wide facet visibly fattens a thin stroke.
+    if aa >= 0.01:
+        floor = min(Config.SOFT_EDGE_TOLERANCE,
+                    Config.TOLERANCE_SHARE * _thickness(content),
+                    cfg_in_tolerance)
+        if cfg.tolerance < floor:
+            cfg = cfg.replace(tolerance=floor)
 
     radius = int(round(cfg.blur))
     if radius >= 1:
@@ -150,6 +164,21 @@ def convert(rgb: np.ndarray, cfg: Config, opaque: Optional[np.ndarray] = None) -
                   background_hex=None if bg is None else palette.rgb_to_hex(pal[bg]),
                   layers=infos, mono=mono, mark=mark,
                   container=container, labels=labels, notes=notes)
+
+
+def _thickness(ink: np.ndarray) -> float:
+    """Width of the stroke or facet the drawing is mostly made of.
+
+    Twice the upper quartile of the distance from each ink pixel to the nearest
+    edge. The quartile rather than the median because most of a stroke's pixels
+    lie near its sides, so the median reads about half the true width; the upper
+    quartile sits near the ridge, where the distance *is* the half-width. Still
+    robust to a few wide blobs among thin lines, which a maximum is not.
+    """
+    if ink.sum() < 20:
+        return float("inf")
+    d = ndimage.distance_transform_edt(ink)
+    return float(2.0 * np.percentile(d[ink], 75))
 
 
 def _document(labels, silhouette, pal, counts, cfg, drop, notes, width, height, snap,

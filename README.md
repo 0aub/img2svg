@@ -227,6 +227,32 @@ On a six-fold node mark, a disc whose traced outline deviates 2.2 px from round
 becomes exact, and the file gets *smaller*: four cubics instead of dozens.
 `--regularize all` turns this on along with container snapping.
 
+## Small images
+
+Scaling every pixel-valued default with the canvas is right for anything
+measured against the artwork and wrong for anything measured against noise.
+Anti-aliasing is about a pixel wide whatever the canvas is, and so is encoding
+noise. On a 190 px mark the old scaling gave `--tolerance 0.11`, finer than a
+blended edge pins its own position down, and `--min-area 4`, which keeps every
+speck the quantiser leaves marooned inside a neighbouring colour.
+
+Both now stop shrinking:
+
+- `--min-area` and `--min-hole-area` floor at 40 px and 20 px, themselves capped
+  at a thousandth of the frame so a 64 px sprite keeps shapes that are small in
+  pixels and large in the picture.
+- `--tolerance` floors at 0.45 px, but only when the source has anti-aliased
+  edges — crisp pixel art does say exactly where its edges are — and never above
+  3.5 % of the artwork's own typical feature width, measured as twice the upper
+  quartile of the distance from each ink pixel to the nearest edge. Half a pixel
+  of slack is invisible on a 50 px facet and visibly fattens a 6 px stroke.
+
+Across 55 marks between 150 and 270 px: **65,503 curves → 13,803** and 2,103
+emitted regions → 341, for ΔE 1.007 → 1.061. Most of those curves were tracing
+the wobble in a blurred edge, and most of those regions were specks. Nothing
+changes at 1024 px and above: the three larger test images come out
+byte-identical.
+
 ## Fidelity is not taste
 
 `img2svg tune` will search parameters for you and minimise mean ΔE. Read this
@@ -299,8 +325,10 @@ Exit codes: `0` success, `2` input not found, `3` nothing flat enough to trace
 (for `batch`, that at least one input failed or came out empty).
 
 Pixel-valued defaults are quoted for a 1024 px image and scale with the input, so
-they behave the same on a 256 px sprite and a 4096 px poster. `--no-autoscale`
-turns that off.
+they behave the same on a 256 px sprite and a 4096 px poster — except that the
+knobs which fight noise stop shrinking partway down, because noise does not
+shrink with the canvas. See [Small images](#small-images). `--no-autoscale`
+turns the whole mechanism off.
 
 ### Tuning by hand
 
@@ -340,7 +368,7 @@ print(verify.format_report(verify.compare(rgb, shot)))
 ## Limits
 
 Measured on 55 logo marks the tool had never seen, default flags, cut from three
-contact sheets: mean ΔE 1.03, none over 2, nothing empty. **85 % of that error
+contact sheets: mean ΔE 1.06, none over 2, nothing empty. **86 % of that error
 sits within 2 px of a boundary**, where the source is a soft blend and the SVG is
 a hard edge; away from boundaries the mean is 0.17 ΔE. So the fills are right and
 the remaining disagreement is the tracer being crisper than its input.

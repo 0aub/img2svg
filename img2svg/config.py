@@ -149,6 +149,40 @@ class Config:
     SCALED = ("blur", "min_area", "min_hole_area", "tolerance", "inset",
               "overlap", "corner_span", "presmooth")
 
+    #: Floors for the scaled fields, in their own units.
+    #:
+    #: Scaling with the canvas is right for anything measured against the
+    #: artwork, and wrong for anything that fights noise, because noise does not
+    #: shrink with the canvas. On a 190 px mark, min_area scaled to 4 px, which
+    #: keeps every speck the quantiser leaves marooned inside a neighbouring
+    #: colour: 772 regions across 55 such marks, of which 438 were noise.
+    #:
+    #: Capped at FLOOR_SHARE of the frame as well, so a 64 px sprite does not
+    #: lose shapes that are small in pixels but large in the picture.
+    #:
+    #: The matching floor for `tolerance` lives in the pipeline, not here: it
+    #: should apply only to a source with soft edges, and whether the edges are
+    #: soft is not known until the palette has been fitted.
+    SCALE_FLOOR = {"min_area": 40.0, "min_hole_area": 20.0}
+
+    #: No area floor may exceed this share of the frame.
+    FLOOR_SHARE = 0.001
+
+    #: Tolerance ceiling for anti-aliased sources, applied in the pipeline.
+    #: Below this the fitter is chasing an edge position the source does not
+    #: pin down that precisely, and spends curves doing it.
+    SOFT_EDGE_TOLERANCE = 0.45
+
+    #: ...but never more than this share of the artwork's typical feature width.
+    #: Half a pixel of slack is invisible on a 50 px facet and visibly fattens a
+    #: 6 px stroke, so line art earns a tighter floor than filled shapes, from
+    #: the drawing's own measurements rather than from an assumption about it.
+    #:
+    #: Swept over 55 marks in three styles. At this share the line art keeps its
+    #: accuracy (dE 1.006 -> 1.035) while still shedding a fifth of its curves,
+    #: and the filled marks shed three fifths for dE +0.03.
+    TOLERANCE_SHARE = 0.035
+
     def scaled(self, width: int, height: int) -> "Config":
         """Return a copy with *scaled* fields adjusted for this image size."""
         if not self.autoscale:
@@ -159,6 +193,12 @@ class Config:
             v = getattr(out, name) * (k * k if name in ("min_area", "min_hole_area") else k)
             if name in ("corner_span", "presmooth"):
                 v = max(0 if name == "presmooth" else 2, int(round(v)))
+            floor = self.SCALE_FLOOR.get(name)
+            if floor is not None:
+                # capped by what was asked for, so --min-area 5 still means 5,
+                # and by the frame, so a sprite keeps its small-but-real shapes
+                floor = min(floor, getattr(self, name), self.FLOOR_SHARE * width * height)
+                v = max(v, floor)
             setattr(out, name, v)
         return out
 
