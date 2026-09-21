@@ -114,6 +114,89 @@ def _reparameterize(pts: np.ndarray, u: np.ndarray, b: Cubic) -> np.ndarray:
     return np.clip(out, 0.0, 1.0)
 
 
+#: How far a run may stray from the straight segment that would replace it.
+#: Beyond this the line is visibly in the wrong place however little it bends.
+LINE_MAX = 0.8
+
+
+def _bend(pts: np.ndarray) -> Tuple[float, float]:
+    """How far the run bows, and how sure we are that it bows at all.
+
+    Fits a parabola in the frame of the chord: the sagitta is the bend, and the
+    quadratic coefficient's standard error says whether that bend is real or is
+    the noise arranging itself. Returns ``(sagitta, significance)``.
+
+    Both halves are needed. A threshold on the largest deviation cannot separate
+    a straight edge that wobbles from an edge that genuinely curves - they reach
+    the same peak. Least squares cancels the noise, which leaves the bend; but a
+    short noisy run can still fit a small parabola by chance, and only its
+    standard error says so.
+
+    Measuring against the chord alone is not enough either: the chord is drawn
+    between two noisy endpoints, so it arrives tilted and reports a bow that is
+    not there.
+    """
+    a, b = pts[0], pts[-1]
+    d = b - a
+    L = float(np.hypot(d[0], d[1]))
+    if L < 1e-9:
+        return float("inf"), float("inf")
+    if len(pts) < 5:
+        return 0.0, 0.0
+    u = d / L
+    v = np.array([-u[1], u[0]])
+    x = (pts - a) @ u
+    y = (pts - a) @ v
+    A = np.stack([np.ones_like(x), x, x * x], 1)
+    try:
+        coef, *_ = np.linalg.lstsq(A, y, rcond=None)
+        cov = np.linalg.inv(A.T @ A)
+    except np.linalg.LinAlgError:
+        return float("inf"), float("inf")
+    resid = y - A @ coef
+    dof = max(len(pts) - 3, 1)
+    var = float(resid @ resid) / dof
+    se = math.sqrt(max(var * float(cov[2, 2]), 1e-24))
+    return abs(float(coef[2])) * L * L / 4.0, abs(float(coef[2])) / se
+
+
+def _off_chord(pts: np.ndarray) -> float:
+    """Furthest a point strays from the segment that would replace the run."""
+    a, b = pts[0], pts[-1]
+    d = b - a
+    n = float(np.hypot(d[0], d[1]))
+    if n < 1e-12:
+        return float(np.hypot(*(pts - a).T).max())
+    u = np.array([-d[1], d[0]]) / n
+    return float(np.abs((pts - a) @ u).max())
+
+
+def _as_line(pts: np.ndarray) -> Cubic:
+    """A cubic that is exactly a straight segment, so it renders dead straight."""
+    d = (pts[-1] - pts[0]) / 3.0
+    return (pts[0], pts[0] + d, pts[-1] - d, pts[-1])
+
+
+#: How many standard errors the bend must clear before it counts as a bend.
+LINE_SIGMA = 3.0
+
+
+def _is_line(pts: np.ndarray, error: float) -> bool:
+    """Prefer the simplest shape that fits.
+
+    A cubic fitted to a noisy straight run always comes back as a shallow S: it
+    has four control points and no reason to keep them collinear. Logos are
+    mostly straight edges, so every one of them arrives gently bowed and the
+    artwork looks hand-wobbled - bars that undulate, strokes that thicken and
+    thin, a polygon whose facets have all gone soft. Test for a line first and
+    the question never arises.
+    """
+    if _off_chord(pts) > LINE_MAX:
+        return False
+    sagitta, sigma = _bend(pts)
+    return sagitta <= error or sigma < LINE_SIGMA
+
+
 def fit_run(pts: np.ndarray, t1: np.ndarray, t2: np.ndarray,
             error: float, depth: int = 0) -> List[Cubic]:
     """Fit one open run of points, splitting only where a cubic cannot reach."""
@@ -122,6 +205,9 @@ def fit_run(pts: np.ndarray, t1: np.ndarray, t2: np.ndarray,
     if len(pts) == 2:
         d = float(np.hypot(*(pts[1] - pts[0]))) / 3.0
         return [(pts[0], pts[0] + t1 * d, pts[1] + t2 * d, pts[1])]
+
+    if _is_line(pts, error):
+        return [_as_line(pts)]
 
     u = _chord_params(pts)
     b = _generate(pts, u, t1, t2)

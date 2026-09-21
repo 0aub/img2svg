@@ -209,6 +209,32 @@ trace to an opaque source over white measures the background you deliberately
 dropped: it reported ΔE 35 on a blue-page test image whose artwork was actually
 near perfect.
 
+## Straight is a shape, not a very flat curve
+
+A cubic has four control points and no reason to keep them collinear. Fit one to
+a run of contour that is straight but noisy and it comes back a shallow S —
+within tolerance everywhere, and bowed. Logos are mostly straight edges, so every
+one of them arrived gently bent: bars that undulate, strokes that thicken and
+thin along their length, a polygon whose facets have all gone soft. The artwork
+looked hand-wobbled, and no accuracy number showed it, because the curve really
+was within a tenth of a pixel of the edge the whole way.
+
+So each run is tested for straightness before a cubic is fitted, and a straight
+one is emitted as an exact `L`.
+
+Telling the two apart is the whole problem, and the largest deviation cannot do
+it: a straight edge with noise on it and an edge that genuinely bends reach the
+same peak. The test fits a parabola in the frame of the chord and asks two
+questions of it — how big is the sagitta, and is the quadratic term larger than
+its own standard error. Noise fits a small parabola by chance; a real bend clears
+its uncertainty by orders of magnitude. On a 60 px run, contour noise comes out
+at 1.1 standard errors, a 0.3 px bow at more than a hundred.
+
+Across 55 marks this takes 30,638 curves to 17,417 and the total from 585 KB to
+476 KB, for ΔE 1.050 → 1.075 — the usual direction, and the usual reason: a
+bowed line tracks a noisy edge slightly better than the straight line the artist
+drew.
+
 ## Shapes the source was reaching for
 
 Generated and hand-drawn artwork is full of shapes that are circles in *intent*
@@ -250,7 +276,7 @@ Both now stop shrinking:
   two pixels wide and a hundred long fills its own bounding box completely.
 
 Across 55 marks between 150 and 270 px: 2,103 emitted regions → 300 and
-65,503 curves → 30,638, for ΔE 1.007 → 1.036. Nothing changes at 1024 px and
+65,503 curves → 17,417, for ΔE 1.007 → 1.075. Nothing changes at 1024 px and
 above: the three larger test images come out byte-identical.
 
 ## Where an edge is, and how well it is known

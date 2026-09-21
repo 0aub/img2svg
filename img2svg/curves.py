@@ -292,14 +292,26 @@ def fmt(v: float, prec: int = 1) -> str:
 
 def path_d(start: Point, segs, prec: int = 1) -> str:
     out = [f"M{fmt(start[0], prec)} {fmt(start[1], prec)}"]
+    at = start
     for c1, c2, p in segs:
-        out.append(
-            "C%s %s %s %s %s %s"
-            % (fmt(c1[0], prec), fmt(c1[1], prec), fmt(c2[0], prec),
-               fmt(c2[1], prec), fmt(p[0], prec), fmt(p[1], prec))
-        )
+        if _is_straight(at, c1, c2, p):
+            out.append("L%s %s" % (fmt(p[0], prec), fmt(p[1], prec)))
+        else:
+            out.append(
+                "C%s %s %s %s %s %s"
+                % (fmt(c1[0], prec), fmt(c1[1], prec), fmt(c2[0], prec),
+                   fmt(c2[1], prec), fmt(p[0], prec), fmt(p[1], prec))
+            )
+        at = p
     out.append("Z")
     return "".join(out)
+
+
+def _is_straight(a: Point, c1: Point, c2: Point, b: Point, tol: float = 1e-6) -> bool:
+    """Control points at the thirds of the chord: the cubic is a line, so say so."""
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    return (abs(c1[0] - (a[0] + dx / 3.0)) < tol and abs(c1[1] - (a[1] + dy / 3.0)) < tol
+            and abs(c2[0] - (b[0] - dx / 3.0)) < tol and abs(c2[1] - (b[1] - dy / 3.0)) < tol)
 
 
 def loop_to_path(loop: Sequence[Point], *, tolerance: float, ins: float,

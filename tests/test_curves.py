@@ -1,6 +1,13 @@
+import math
+
 import numpy as np
+import pytest
 
 from img2svg import curves
+
+
+def _cross(a, b):
+    return float(a[0] * b[1] - a[1] * b[0])
 
 
 def _rect(h=20, w=30, pad=5):
@@ -103,3 +110,63 @@ def test_corners_are_found_at_two_scales():
     t = np.linspace(0, 2 * np.pi, 300, endpoint=False)
     circle = [(50 + 30 * np.cos(x), 50 + 30 * np.sin(x)) for x in t]
     assert curves.detect_corners(circle, 5, 50.0) == []
+
+
+def test_a_straight_run_comes_back_straight():
+    """A cubic through a noisy straight run is a shallow S unless asked otherwise."""
+    from img2svg import fitting
+
+    rng = np.random.default_rng(3)
+    # about what a pre-smoothed sub-pixel contour carries along a straight edge
+    pts = np.stack([np.linspace(0, 60, 61), rng.normal(0, 0.12, 61)], 1)
+    segs = fitting.fit_run(pts, np.array([1.0, 0.0]), np.array([-1.0, 0.0]), 0.1)
+    # it may come back as more than one segment; what matters is that every one
+    # of them is exactly straight, not merely close to straight
+    assert segs
+    for a, c1, c2, b in segs:
+        for c in (c1, c2):
+            assert abs(_cross(b - a, c - a)) < 1e-9
+
+
+def test_a_real_arc_is_not_flattened_into_a_line():
+    from img2svg import fitting
+
+    t = np.linspace(0, math.pi / 2, 40)
+    pts = np.stack([30 * np.cos(t), 30 * np.sin(t)], 1)
+    assert not fitting._is_line(pts, 0.2)
+    segs = fitting.fit_run(pts, np.array([0.0, 1.0]), np.array([-1.0, 0.0]), 0.2)
+    a, c1, c2, b = segs[0]
+    assert abs(_cross(b - a, c1 - a)) > 1.0, "an arc must keep its bend"
+
+
+def test_a_gentle_bend_is_told_apart_from_a_wobble():
+    """Both reach the same peak deviation; only one of them is bending."""
+    from img2svg import fitting
+
+    x = np.linspace(0, 60, 61)
+    bow = np.stack([x, 0.45 * (1 - ((x - 30) / 30) ** 2)], 1)
+    rng = np.random.default_rng(5)
+    noise = np.stack([x, rng.normal(0, 0.18, 61)], 1)
+    # they reach the same peak, so no threshold on deviation can tell them apart
+    assert abs(bow[:, 1]).max() == pytest.approx(abs(noise[:, 1]).max(), rel=0.35)
+    assert not fitting._is_line(bow, 0.1)
+    assert fitting._is_line(noise, 0.1)
+
+
+def test_a_bend_must_clear_its_own_uncertainty():
+    """A short noisy run fits a small parabola by chance; that is not a bend."""
+    from img2svg import fitting
+
+    x = np.linspace(0, 60, 61)
+    rng = np.random.default_rng(11)
+    _, sigma = fitting._bend(np.stack([x, rng.normal(0, 0.2, 61)], 1))
+    assert sigma < fitting.LINE_SIGMA
+    _, sigma = fitting._bend(np.stack([x, 0.5 * (1 - ((x - 30) / 30) ** 2)], 1))
+    assert sigma > fitting.LINE_SIGMA
+
+
+def test_a_straight_segment_is_written_as_a_line():
+    d = curves.path_d((0.0, 0.0), [((10.0, 0.0), (20.0, 0.0), (30.0, 0.0)),
+                                   ((30.0, 10.0), (20.0, 25.0), (0.0, 30.0))], prec=1)
+    assert d.count("L") == 1 and d.count("C") == 1
+    assert "L30 0" in d
