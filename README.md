@@ -250,7 +250,7 @@ Both now stop shrinking:
   two pixels wide and a hundred long fills its own bounding box completely.
 
 Across 55 marks between 150 and 270 px: 2,103 emitted regions → 300 and
-79,266 curves → 30,638, for ΔE 1.007 → 1.036. Nothing changes at 1024 px and
+65,503 curves → 30,638, for ΔE 1.007 → 1.036. Nothing changes at 1024 px and
 above: the three larger test images come out byte-identical.
 
 ## Where an edge is, and how well it is known
