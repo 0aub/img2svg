@@ -63,19 +63,19 @@ make example
 
 ```
 honey-heart.png  ->  out/honey-heart.svg
-  1024 x 1024  ~  8 colours, 75 regions, 1309 curves, 46.4 KB
+  1024 x 1024  ~  8 colours, 65 regions, 1348 curves, 35.7 KB
   note: treated #271420 as a container: it fills 96% of the frame, so --mark
         and --mono leave it out. Use --container keep to draw it as a normal layer.
   note: container snapped to a superellipse: r=235, n=1.77
         (measured corner radii 235, 234, 187, 188, spread 20%)
-  dE2000  mean 1.63   p95 2.23   max 99.69   5.6% of pixels over dE 2
+  dE2000  mean 1.61   p95 2.22   max 99.69   5.5% of pixels over dE 2
 ```
 
 The outputs are the full SVG, `.mark.svg` without the card, `.mono.svg` as a
 single `currentColor` silhouette, and a self-contained HTML report with the
 source, the result, a ΔE heat map, and the worst 32 px blocks ranked. That
 example passes `--regularize container`, which scores *worse* (plain defaults
-reach 0.79) and looks *better*; see [Fidelity is not taste](#fidelity-is-not-taste).
+reach 0.78) and looks *better*; see [Fidelity is not taste](#fidelity-is-not-taste).
 
 ## Many at once
 
@@ -239,10 +239,8 @@ Only colours actually present within two pixels are considered. An earlier
 attempt searched every pair in the palette and painted the honey dipper's handle
 as a blend of two colours that were nowhere near it.
 
-That is 1.1 % of pixels across 55 marks. It takes them from 17,417 curves to
-15,021 and **improves** ΔE, 1.075 → 1.068 — the first change in this project to
-move every number the same way, which is what a correct fix looks like next to a
-trade.
+That is 1.1 % of pixels across 55 marks. It took 1.1 % of pixels and **improved** every number at once — ΔE, curve count
+and file size together — which is what a correct fix looks like next to a trade.
 
 `scripts/thin_features.py` is the guard that made this safe to attempt. It picks
 probe points from the source alone — at the ridge of something two pixels wide
@@ -284,7 +282,8 @@ superellipse at n = 1.77 — circular to a seventh of a pixel at that radius, so
 they are accepted, while anything squarer or rounder is not. Above 0.5 the fit
 starts claiming corners it should not and the icon's worst block triples.
 
-Across 55 marks: 30,638 curves → 14,328, and ΔE 1.050 → 1.067.
+Together with the blend fix below, these took the 55 marks from 30,638 curves
+to 14,328 at ΔE 1.050 → 1.067 — the state the repo is in.
 
 
 
@@ -347,8 +346,8 @@ Both now stop shrinking:
   is dropped as a seam rather than drawn. Density cannot catch these: a sliver
   two pixels wide and a hundred long fills its own bounding box completely.
 
-Across 55 marks between 150 and 270 px: 2,103 emitted regions → 300 and
-65,503 curves → 14,328, for ΔE 1.007 → 1.067. Nothing changes at 1024 px and
+Across 55 marks between 150 and 270 px this took 2,103 emitted regions down to
+300 and 65,503 curves to 14,328, at ΔE 1.007 → 1.067. Nothing changes at 1024 px and
 above: the three larger test images come out byte-identical.
 
 ## Where an edge is, and how well it is known
@@ -529,6 +528,22 @@ the remaining disagreement is the tracer being crisper than its input.
 - Traced edges sit a touch inside the source's. Across 55 marks the result is
   +0.21 L\* lighter than the source, worst +0.51 — well under the roughly 1 L\*
   a person can see, but it is a bias, not noise.
+
+## Guards
+
+Four checks, because the mean ΔE cannot see most of what goes wrong. Each of
+these caught a real regression that the mean did not move for:
+
+| script | asks | should read |
+| --- | --- | --- |
+| `scripts/thin_features.py` | are the details the source draws still drawn | ~99 % |
+| `scripts/wrong_regions.py` | is any colour simply wrong away from an edge | 0 |
+| `scripts/joint_kinks.py` | did a change crease a joint that was smooth | 0 |
+| `scripts/fuzz.py` | does random flat art still trace without failing | 0 failures |
+
+Run them against a change before believing its ΔE. The pattern in this project
+has been that an improvement in the mean and a degradation you can see arrive in
+the same commit; these are what tell them apart.
 
 ## Development
 
