@@ -339,14 +339,22 @@ print(verify.format_report(verify.compare(rgb, shot)))
 
 ## Limits
 
-- Gradients become flat regions. Emitting real `linearGradient`s was built and
-  measured before being dropped: on a gradient-heavy mark the fills were already
-  within 0.6 ΔE and the ramps were not where the error lived, so it bought
-  complexity and no accuracy.
-- Palette size is not an accuracy dial. Forcing more colours was swept from 24
-  down to 3 minimum separation: it makes every image *worse* and can multiply
-  the file size tenfold, because the extra entries slice smooth shading into
-  thin bands with noisy boundaries.
+Measured on 55 logo marks the tool had never seen, default flags, cut from three
+contact sheets: mean ΔE 1.03, none over 2, nothing empty. **85 % of that error
+sits within 2 px of a boundary**, where the source is a soft blend and the SVG is
+a hard edge; away from boundaries the mean is 0.17 ΔE. So the fills are right and
+the remaining disagreement is the tracer being crisper than its input.
+
+- Gradients become flat bands. Real `linearGradient` output was prototyped and
+  measured before being dropped: across shaded marks, a least-squares plane fit
+  the region's colour with a residual of 15–41 RGB units, because the shading
+  follows a curving ribbon or a faceted solid rather than a straight ramp. The
+  one region that did fit a plane scored *worse* with a gradient than without.
+  SVG has no gradient that follows a path, so flat bands are the honest output.
+- Palette size is not an accuracy dial. Minimum separation was swept 18 → 8:
+  mean ΔE improves 1.050 → 1.029, a 2 % gain, for 2.4× the curves. Below about
+  12, extra entries start slicing smooth shading into bands whose boundaries
+  are decided by encoding noise.
 - Semi-transparent interiors are not modelled; alpha is used only as a silhouette.
 - Strokes thinner than about 2 px may be eaten by segmentation; lower `--blur`.
 - Container detection is a stated rule, not a discovery — a solid mark that fills
@@ -356,9 +364,9 @@ print(verify.format_report(verify.compare(rgb, shot)))
 - Where three regions meet at a narrow tip, the boundary between two of them can
   step by a pixel or two instead of running smoothly into the point. Raising
   `--blur` reduces it, and `--layers stacked` usually removes it.
-- Gradients become flat bands. On a six-colour gradient mark that lands at
-  ΔE 1.1 with ink area within 0.7 % of the source, which reads as clean flat
-  art rather than as banding — but it is a reinterpretation, not a reproduction.
+- Traced edges sit a touch inside the source's. Across 55 marks the result is
+  +0.21 L\* lighter than the source, worst +0.51 — well under the roughly 1 L\*
+  a person can see, but it is a bias, not noise.
 
 ## Development
 
