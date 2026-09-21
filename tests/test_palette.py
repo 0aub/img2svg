@@ -80,3 +80,38 @@ def test_recovery_does_not_fire_on_ordinary_anti_aliasing(flat_art):
     base = palette.extract(flat_art, Config(missing_share=1.1))   # recovery off
     with_recovery = palette.extract(flat_art, Config())
     assert len(with_recovery) == len(base)
+
+
+def _closest(pal):
+    d = np.linalg.norm(pal[:, None].astype(float) - pal[None].astype(float), axis=-1)
+    np.fill_diagonal(d, np.inf)
+    return float(d.min())
+
+
+def test_min_sep_holds_on_the_final_palette(flat_art):
+    """Seeding respects min_sep; Lloyd used to quietly undo it."""
+    for sep in (12.0, 18.0, 40.0):
+        pal = palette.extract(flat_art, Config(min_sep=sep))
+        assert len(pal) >= 1
+        if len(pal) > 1:
+            assert _closest(pal) >= sep - 1e-6, f"min_sep {sep} violated by {_closest(pal)}"
+
+
+def test_a_shaded_region_does_not_split_into_near_duplicates():
+    """A smooth ramp is exactly where two centroids converge onto each other."""
+    h = w = 128
+    img = np.full((h, w, 3), 255, dtype=np.uint8)
+    ramp = np.linspace(60, 110, w).astype(np.uint8)
+    img[16:112, 16:112] = np.stack([ramp[16:112] // 3, ramp[16:112], ramp[16:112] // 2], -1)
+    pal = palette.extract(img, Config())
+    assert _closest(pal) >= Config().min_sep - 1e-6
+
+
+def test_merging_keeps_the_colour_where_the_pixels_are(flat_art):
+    """The survivor sits at the weighted mean, not halfway between."""
+    big = np.full((64, 64, 3), 200, dtype=np.uint8)
+    big[:, :60] = (30, 140, 90)     # the bulk
+    big[:, 60:] = (36, 146, 96)     # a sliver 10 units away
+    pal = palette.extract(big, Config(min_sep=18.0))
+    merged = min(pal, key=lambda c: abs(int(c[1]) - 140))
+    assert abs(int(merged[1]) - 140) < abs(int(merged[1]) - 146)
